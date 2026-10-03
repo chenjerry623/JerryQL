@@ -1,0 +1,12 @@
+date: 2026-10-03T04:00:03Z
+commit: 9d629b7
+os: Linux 6.18.44-fc-v64 x86_64
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+cores: 4
+memory: 15Gi
+compiler: c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+build: CMake Release (-O3 -DNDEBUG)
+sqlite: 3.45.1 (system library, /usr/lib/x86_64-linux-gnu/libsqlite3.so)
+sqlite settings: page_size=4096, journal_mode=WAL, cache_size=-4096 (4 MiB), wal_autocheckpoint=1000, synchronous=FULL (durable) or NORMAL (relaxed)
+jerryql settings: 4096-byte pages, 1024-page buffer pool (4 MiB), checkpoint every 1000 frames, fsync per commit (durable) or not (relaxed)
+filesystem: ext4

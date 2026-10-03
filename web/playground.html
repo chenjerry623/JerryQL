@@ -1,0 +1,333 @@
+<title>JerryQL Playground</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+  /* Layout: a two-pane console (query editor | result log) under a compact masthead; stacks on phones. */
+  :root {
+    --ground: #eef1f5;        /* page */
+    --sheet: #ffffff;         /* panes */
+    --ink: #17202e;           /* text */
+    --muted: #5b6678;         /* secondary text */
+    --rule: #d3d9e2;          /* borders */
+    --accent: #2350b8;        /* cobalt: actions, prompts */
+    --accent-ink: #ffffff;
+    --plan: #8a5a00;          /* amber: query plan lines */
+    --error: #b42318;
+    --chip: #e3e8f0;
+    --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+    --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f141c; --sheet: #161d28; --ink: #e4e9f1; --muted: #98a3b5; --rule: #2a3444;
+      --accent: #7ea2ff; --accent-ink: #0f141c; --plan: #f0b54a; --error: #ff8a7a; --chip: #212a38;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0f141c; --sheet: #161d28; --ink: #e4e9f1; --muted: #98a3b5; --rule: #2a3444;
+    --accent: #7ea2ff; --accent-ink: #0f141c; --plan: #f0b54a; --error: #ff8a7a; --chip: #212a38;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground); color: var(--ink); font-family: var(--font-body);
+    font-size: 15px; line-height: 1.5; margin: 0;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 32px; }
+
+  header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; }
+  h1 {
+    font-family: var(--font-display); font-weight: 600; font-size: 2rem; letter-spacing: -0.01em;
+    margin: 0; text-wrap: balance;
+  }
+  h1 small { font-family: var(--font-mono); font-size: 0.8rem; font-weight: 500; color: var(--muted); margin-left: 10px; letter-spacing: 0; }
+  @media (max-width: 520px) { h1 small { display: block; margin-left: 0; } }
+  .lede { margin: 6px 0 0; color: var(--muted); max-width: 68ch; }
+  .links { display: flex; gap: 16px; font-size: 0.9rem; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+
+  .console {
+    margin-top: 18px; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: 16px; align-items: stretch;
+  }
+  @media (max-width: 860px) { .console { grid-template-columns: minmax(0, 1fr); } }
+
+  .pane {
+    background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px;
+    display: flex; flex-direction: column; min-width: 0;
+  }
+  .pane-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+    padding: 10px 12px; border-bottom: 1px solid var(--rule);
+  }
+  .label {
+    font-family: var(--font-display); font-weight: 600; font-size: 0.78rem; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  textarea {
+    flex: 1; min-height: 260px; width: 100%; resize: vertical; border: 0; outline: none;
+    padding: 12px; background: transparent; color: var(--ink);
+    font-family: var(--font-mono); font-size: 0.88rem; line-height: 1.55; tab-size: 2;
+  }
+  textarea:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+  .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; border-top: 1px solid var(--rule); }
+  .hint { font-size: 0.8rem; color: var(--muted); margin-left: auto; }
+  kbd { font-family: var(--font-mono); font-size: 0.75rem; border: 1px solid var(--rule); border-radius: 3px; padding: 0 4px; }
+
+  button {
+    font: 500 0.88rem var(--font-body); border-radius: 4px; padding: 6px 12px; cursor: pointer;
+    border: 1px solid var(--rule); background: var(--sheet); color: var(--ink);
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  button:hover { border-color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: 0.5; cursor: wait; }
+
+  .output {
+    flex: 1; margin: 0; padding: 12px; min-height: 260px; max-height: 70vh; overflow: auto;
+    font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.5; white-space: pre;
+    font-variant-numeric: tabular-nums;
+  }
+  .output .prompt { color: var(--accent); font-weight: 500; }
+  .output .err { color: var(--error); }
+  .output .plan { color: var(--plan); }
+  .output .meta { color: var(--muted); }
+
+  .examples { margin-top: 20px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .chip { background: var(--chip); border-color: transparent; font-size: 0.85rem; }
+
+  .notes {
+    margin-top: 24px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 28px;
+    border-top: 1px solid var(--rule); padding-top: 16px; font-size: 0.9rem; color: var(--muted);
+  }
+  @media (max-width: 760px) { .notes { grid-template-columns: minmax(0, 1fr); } }
+  .notes h2 { font-family: var(--font-display); font-weight: 600; font-size: 0.95rem; color: var(--ink); margin: 0 0 4px; }
+  .notes p { margin: 0; }
+  .pipeline { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink); }
+
+  @media (prefers-reduced-motion: no-preference) { button { transition: border-color 120ms; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>JerryQL <small>SQL engine · C++17 → WebAssembly</small></h1>
+      <p class="lede">A SQL database engine written from scratch in C++, compiled to WebAssembly and running in this tab. Edit the query and press Run. Nothing is sent to a server.</p>
+    </div>
+    <nav class="links">
+      <a href="https://github.com/chenjerry623/JerryQL" target="_blank" rel="noopener">Source on GitHub</a>
+    </nav>
+  </header>
+
+  <section class="console">
+    <div class="pane">
+      <div class="pane-head">
+        <span class="label">Query</span>
+        <span class="hint" id="status">Loading engine…</span>
+      </div>
+      <textarea id="editor" spellcheck="false" aria-label="SQL to run">-- The planner turns this into a primary-key range scan:
+EXPLAIN SELECT name, salary FROM employees
+WHERE id >= 2 AND id < 5;
+
+SELECT name, salary / 12 AS monthly
+FROM employees
+WHERE dept = 'Engineering' OR salary > 190000
+ORDER BY salary DESC;</textarea>
+      <div class="actions">
+        <button class="primary" id="run" disabled>Run</button>
+        <button id="reset" disabled>Reset data</button>
+        <button id="clear">Clear output</button>
+        <span class="hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> runs</span>
+      </div>
+    </div>
+
+    <div class="pane">
+      <div class="pane-head"><span class="label">Output</span><span class="hint" id="tables"></span></div>
+      <pre class="output" id="output" aria-live="polite"></pre>
+    </div>
+  </section>
+
+  <section class="examples">
+    <span class="label">Try an example</span>
+    <div class="chips" id="chips"></div>
+  </section>
+
+  <section class="notes">
+    <div>
+      <h2>How a query runs</h2>
+      <p class="pipeline">lexer → parser → AST → planner → operators</p>
+      <p>Hand-written recursive-descent parser. Pull-based (Volcano) operators: scan, filter, sort, limit, project.</p>
+    </div>
+    <div>
+      <h2>What the planner does</h2>
+      <p>Conditions on the primary key become a B+tree point lookup or key-range scan instead of reading every row. <code>EXPLAIN</code> shows the plan it chose.</p>
+    </div>
+    <div>
+      <h2>Scope</h2>
+      <p>INT and TEXT columns, one INT primary key, transactions; no NULLs, joins or aggregates yet. Here the B+tree and write-ahead log run over in-memory files, so reloading the page resets the data.</p>
+    </div>
+  </section>
+</div>
+
+<script src="jerryql.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var SEED_SQL = [
+    "CREATE TABLE employees (id INT PRIMARY KEY, name TEXT, dept TEXT, salary INT);",
+    "INSERT INTO employees VALUES",
+    "  (1, 'Ada', 'Engineering', 185000), (2, 'Grace', 'Engineering', 172000),",
+    "  (3, 'Linus', 'Infra', 158000), (4, 'Barbara', 'Research', 191000),",
+    "  (5, 'Ken', 'Infra', 149000), (6, 'Margaret', 'Research', 176000);"
+  ].join("\n");
+
+  var EXAMPLES = [
+    { label: "All rows", sql: "SELECT * FROM employees;" },
+    { label: "Point lookup plan", sql: "EXPLAIN SELECT * FROM employees WHERE id = 4;\nSELECT * FROM employees WHERE id = 4;" },
+    { label: "Full scan plan", sql: "-- No condition on the primary key, so every row is read:\nEXPLAIN SELECT name FROM employees WHERE dept = 'Infra' ORDER BY salary DESC LIMIT 1;" },
+    { label: "Sort and limit", sql: "SELECT name, dept, salary FROM employees\nORDER BY dept, salary DESC\nLIMIT 4;" },
+    { label: "Raise for Infra", sql: "UPDATE employees SET salary = salary + 10000 WHERE dept = 'Infra';\nSELECT name, salary FROM employees WHERE dept = 'Infra';" },
+    { label: "Shift every key", sql: "-- Rows are read before any are written, so moving keys is safe:\nUPDATE employees SET id = id + 100;\nSELECT id, name FROM employees;" },
+    { label: "New table", sql: "CREATE TABLE projects (id INT PRIMARY KEY, title TEXT, owner_id INT);\nINSERT INTO projects VALUES (1, 'Query planner', 1), (2, 'B+tree storage', 3);\nSELECT * FROM projects WHERE owner_id = 3;" },
+    { label: "Rollback", sql: "BEGIN;\nDELETE FROM employees WHERE dept = 'Engineering';\nSELECT name, dept FROM employees;\nROLLBACK;\n-- The delete is undone:\nSELECT name, dept FROM employees;" },
+    { label: "Errors", sql: "INSERT INTO employees VALUES (1, 'Duplicate', 'X', 0);\nSELECT name FROM employees WHERE salary = 'lots';\nSELECT salary / 0 FROM employees;\nSELEC * FROM employees;" },
+    { label: "Show schema", sql: ".schema" }
+  ];
+
+  var editor = document.getElementById("editor");
+  var output = document.getElementById("output");
+  var status = document.getElementById("status");
+  var tablesHint = document.getElementById("tables");
+  var runButton = document.getElementById("run");
+  var resetButton = document.getElementById("reset");
+  var engine = null;
+
+  function escapeHtml(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function classForLine(line, inPlan) {
+    if (line.indexOf("jerryql> ") === 0) return "prompt";
+    if (line.indexOf("Error: ") === 0) return "err";
+    if (/^\(\d+ rows?\)$/.test(line)) return "meta";
+    if (inPlan && line.indexOf("| ") === 0 && line.indexOf("QUERY PLAN") === -1) return "plan";
+    return "";
+  }
+
+  function renderLines(text) {
+    var html = "";
+    var inPlan = false;
+    text.split("\n").forEach(function (line) {
+      if (line.indexOf("jerryql> ") === 0) inPlan = /^jerryql> EXPLAIN/i.test(line);
+      var cls = classForLine(line, inPlan);
+      html += cls ? '<span class="' + cls + '">' + escapeHtml(line) + "</span>\n" : escapeHtml(line) + "\n";
+    });
+    return html;
+  }
+
+  function appendOutput(text) {
+    output.insertAdjacentHTML("beforeend", renderLines(text));
+    output.scrollTop = output.scrollHeight;
+  }
+
+  function callEngine(sql) {
+    var ptr = engine.ccall("jerryql_run", "number", ["string"], [sql]);
+    var text = engine.UTF8ToString(ptr);
+    engine.ccall("jerryql_free", null, ["number"], [ptr]);
+    return text;
+  }
+
+  // Lines starting with "." are shell commands; everything else is SQL.
+  function runInput(input) {
+    var sqlBuffer = [];
+    var result = "";
+    function flushSql() {
+      var sql = sqlBuffer.join("\n");
+      if (sql.trim()) result += callEngine(sql);
+      sqlBuffer = [];
+    }
+    input.split("\n").forEach(function (line) {
+      if (/^\s*\./.test(line)) {
+        flushSql();
+        result += "jerryql> " + line.trim() + "\n" + callEngine(line) + "\n";
+      } else {
+        sqlBuffer.push(line);
+      }
+    });
+    flushSql();
+    return result;
+  }
+
+  function refreshTables() {
+    var names = callEngine(".tables").trim().split("\n").filter(Boolean);
+    tablesHint.textContent = names.length ? "Tables: " + names.join(", ") : "No tables";
+  }
+
+  function run() {
+    if (!engine) return;
+    var started = performance.now();
+    appendOutput(runInput(editor.value));
+    var ms = performance.now() - started;
+    status.textContent = "Ran in " + (ms < 1 ? ms.toFixed(2) : ms.toFixed(1)) + " ms";
+    refreshTables();
+  }
+
+  function resetData() {
+    engine.ccall("jerryql_reset", null, [], []);
+    callEngine(SEED_SQL);
+    output.textContent = "";
+    appendOutput("-- Data reset: employees table reloaded with 6 rows.\n\n");
+    refreshTables();
+  }
+
+  EXAMPLES.forEach(function (example) {
+    var chip = document.createElement("button");
+    chip.className = "chip";
+    chip.type = "button";
+    chip.textContent = example.label;
+    chip.addEventListener("click", function () {
+      editor.value = example.sql;
+      run();
+    });
+    document.getElementById("chips").appendChild(chip);
+  });
+
+  runButton.addEventListener("click", run);
+  resetButton.addEventListener("click", resetData);
+  document.getElementById("clear").addEventListener("click", function () { output.textContent = ""; });
+  editor.addEventListener("keydown", function (event) {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      run();
+    }
+  });
+
+  // Before the engine loads, show the seed script so the page isn't empty.
+  output.textContent = "-- Loading the engine (WebAssembly)…\n\n" + SEED_SQL + "\n";
+
+  if (typeof createJerryQL !== "function") {
+    status.textContent = "Engine failed to load";
+    appendOutput("Error: could not load jerryql.js. Try reloading the page.\n");
+    return;
+  }
+
+  createJerryQL().then(function (module) {
+    engine = module;
+    output.textContent = "";
+    callEngine(SEED_SQL);
+    appendOutput("-- Engine loaded. Sample table: employees (6 rows). Try the examples below.\n\n");
+    run();
+    runButton.disabled = false;
+    resetButton.disabled = false;
+  }).catch(function (error) {
+    status.textContent = "Engine failed to load";
+    appendOutput("Error: " + String(error && error.message || error) + "\n");
+  });
+})();
+</script>

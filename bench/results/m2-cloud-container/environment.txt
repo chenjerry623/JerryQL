@@ -1,0 +1,7 @@
+date: 2026-10-03T03:54:41Z
+commit: 6bb38c6
+os: Linux 6.18.44-fc-v64 x86_64
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+cores: 4
+compiler: c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+filesystem for kill mode: ext4

@@ -1,0 +1,25 @@
+-- Every error is reported and the script keeps going.
+CREATE TABLE t (id INT PRIMARY KEY, name TEXT);
+CREATE TABLE t (x INT);
+CREATE TABLE bad (a TEXT PRIMARY KEY);
+CREATE TABLE bad (a INT, a INT);
+INSERT INTO t VALUES (1, 'one');
+INSERT INTO t VALUES (1, 'again');
+INSERT INTO t VALUES ('two', 2);
+INSERT INTO t VALUES (2);
+INSERT INTO t (id) VALUES (2);
+INSERT INTO missing VALUES (1);
+SELECT nope FROM t;
+SELECT * FROM t WHERE name = 1;
+SELECT * FROM t WHERE name;
+SELECT id / 0 FROM t;
+SELECT id * 9223372036854775807 * 2 FROM t;
+SELECT * FROM t WHERE id = 99999999999999999999;
+UPDATE t SET nope = 1;
+UPDATE t SET name = 5;
+SELECT * FROM t ORDER;
+SELECT * FROM t WHERE a < b < c;
+SELECT * FROM t WHERE name = # 'x';
+DROP TABLE missing;
+SELECT * FROM t;
+SELECT 'unterminated FROM t;

@@ -1,0 +1,77 @@
+jerryql> CREATE TABLE t (id INT PRIMARY KEY, name TEXT);
+CREATE TABLE
+
+jerryql> CREATE TABLE t (x INT);
+Error: table t already exists
+
+jerryql> CREATE TABLE bad (a TEXT PRIMARY KEY);
+Error: PRIMARY KEY column must be INT
+
+jerryql> CREATE TABLE bad (a INT, a INT);
+Error: duplicate column name: a
+
+jerryql> INSERT INTO t VALUES (1, 'one');
+INSERT 1
+
+jerryql> INSERT INTO t VALUES (1, 'again');
+Error: duplicate primary key: t.id = 1
+
+jerryql> INSERT INTO t VALUES ('two', 2);
+Error: column id expects INT but got TEXT 'two'
+
+jerryql> INSERT INTO t VALUES (2);
+Error: expected 2 values but got 1
+
+jerryql> INSERT INTO t (id) VALUES (2);
+Error: missing value for column name (JerryQL has no NULLs or defaults yet)
+
+jerryql> INSERT INTO missing VALUES (1);
+Error: no such table: missing
+
+jerryql> SELECT nope FROM t;
+Error: no such column: nope
+
+jerryql> SELECT * FROM t WHERE name = 1;
+Error: cannot compare TEXT with INT
+
+jerryql> SELECT * FROM t WHERE name;
+Error: expected a condition but got TEXT 'one'
+
+jerryql> SELECT id / 0 FROM t;
+Error: division by zero
+
+jerryql> SELECT id * 9223372036854775807 * 2 FROM t;
+Error: integer overflow in 9223372036854775807 * 2
+
+jerryql> SELECT * FROM t WHERE id = 99999999999999999999;
+Error: integer literal out of range: 99999999999999999999
+
+jerryql> UPDATE t SET nope = 1;
+Error: no such column: nope
+
+jerryql> UPDATE t SET name = 5;
+Error: column name expects TEXT but got INT 5
+
+jerryql> SELECT * FROM t ORDER;
+Error: syntax error at position 651: expected BY but found ';'
+
+jerryql> SELECT * FROM t WHERE a < b < c;
+Error: syntax error at position 681: expected ';' or end of statement but found '<'
+
+jerryql> SELECT * FROM t WHERE name = # 'x';
+Error: unexpected character '#' at position 715
+
+jerryql> DROP TABLE missing;
+Error: no such table: missing
+
+jerryql> SELECT * FROM t;
++----+------+
+| id | name |
++----+------+
+|  1 | one  |
++----+------+
+(1 row)
+
+jerryql> SELECT 'unterminated FROM t;;
+Error: unterminated string starting at position 766
+
