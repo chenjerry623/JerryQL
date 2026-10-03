@@ -1,0 +1,70 @@
+jerryql> CREATE TABLE accounts (id INT PRIMARY KEY, owner TEXT, balance INT);
+CREATE TABLE
+
+jerryql> INSERT INTO accounts (owner, balance, id) VALUES ('ann', 100, 10), ('bob', 50, 20), ('cat', 75, 30);
+INSERT 3
+
+jerryql> UPDATE accounts SET balance = balance - 25 WHERE owner = 'ann';
+UPDATE 1
+
+jerryql> UPDATE accounts SET id = id + 1;
+UPDATE 3
+
+jerryql> SELECT * FROM accounts;
++----+-------+---------+
+| id | owner | balance |
++----+-------+---------+
+| 11 | ann   |      75 |
+| 21 | bob   |      50 |
+| 31 | cat   |      75 |
++----+-------+---------+
+(3 rows)
+
+jerryql> UPDATE accounts SET id = 21 WHERE id = 11;
+Error: duplicate primary key: accounts.id = 21
+
+jerryql> UPDATE accounts SET balance = balance * 2 WHERE id >= 21 AND id <= 31;
+UPDATE 2
+
+jerryql> DELETE FROM accounts WHERE id = 21;
+DELETE 1
+
+jerryql> SELECT * FROM accounts;
++----+-------+---------+
+| id | owner | balance |
++----+-------+---------+
+| 11 | ann   |      75 |
+| 31 | cat   |     150 |
++----+-------+---------+
+(2 rows)
+
+jerryql> DELETE FROM accounts;
+DELETE 2
+
+jerryql> SELECT * FROM accounts;
++----+-------+---------+
+| id | owner | balance |
++----+-------+---------+
+(0 rows)
+
+jerryql> CREATE TABLE notes (body TEXT);
+CREATE TABLE
+
+jerryql> INSERT INTO notes VALUES ('second'), ('first');
+INSERT 2
+
+jerryql> SELECT * FROM notes;
++--------+
+| body   |
++--------+
+| second |
+| first  |
++--------+
+(2 rows)
+
+jerryql> DROP TABLE notes;
+DROP TABLE
+
+jerryql> SELECT * FROM notes;
+Error: no such table: notes
+

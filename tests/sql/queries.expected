@@ -1,0 +1,122 @@
+jerryql> CREATE TABLE people (id INT PRIMARY KEY, name TEXT, age INT, city TEXT);
+CREATE TABLE
+
+jerryql> INSERT INTO people VALUES (3, 'Cleo', 41, 'Vancouver'), (1, 'Ada', 36, 'London'),
+  (4, 'Dan', 29, 'Vancouver'), (2, 'Brian', 29, 'Toronto'), (5, 'Eve', 52, 'London');
+INSERT 5
+
+jerryql> SELECT * FROM people;
++----+-------+-----+-----------+
+| id | name  | age | city      |
++----+-------+-----+-----------+
+|  1 | Ada   |  36 | London    |
+|  2 | Brian |  29 | Toronto   |
+|  3 | Cleo  |  41 | Vancouver |
+|  4 | Dan   |  29 | Vancouver |
+|  5 | Eve   |  52 | London    |
++----+-------+-----+-----------+
+(5 rows)
+
+jerryql> select NAME, Age from PEOPLE where AGE = 29;
++-------+-----+
+| name  | age |
++-------+-----+
+| Brian |  29 |
+| Dan   |  29 |
++-------+-----+
+(2 rows)
+
+jerryql> SELECT name, age * 12 AS months, age > 40 AS senior FROM people ORDER BY age DESC, name;
++-------+--------+--------+
+| name  | months | senior |
++-------+--------+--------+
+| Eve   |    624 |      1 |
+| Cleo  |    492 |      1 |
+| Ada   |    432 |      0 |
+| Brian |    348 |      0 |
+| Dan   |    348 |      0 |
++-------+--------+--------+
+(5 rows)
+
+jerryql> SELECT name FROM people WHERE city = 'Vancouver' AND NOT age < 30;
++------+
+| name |
++------+
+| Cleo |
++------+
+(1 row)
+
+jerryql> SELECT name FROM people WHERE (city = 'London' OR city = 'Toronto') AND age <> 52;
++-------+
+| name  |
++-------+
+| Ada   |
+| Brian |
++-------+
+(2 rows)
+
+jerryql> SELECT id FROM people WHERE id > 2;
++----+
+| id |
++----+
+|  3 |
+|  4 |
+|  5 |
++----+
+(3 rows)
+
+jerryql> SELECT id FROM people WHERE 2 >= id;
++----+
+| id |
++----+
+|  1 |
+|  2 |
++----+
+(2 rows)
+
+jerryql> SELECT id FROM people WHERE id > 3 AND id < 3;
++----+
+| id |
++----+
+(0 rows)
+
+jerryql> SELECT name FROM people ORDER BY city, name DESC LIMIT 4;
++-------+
+| name  |
++-------+
+| Eve   |
+| Ada   |
+| Brian |
+| Dan   |
++-------+
+(4 rows)
+
+jerryql> SELECT name, 'it''s' AS quote, -id FROM people WHERE id = -(-1);
++------+-------+-----+
+| name | quote | -id |
++------+-------+-----+
+| Ada  | it's  |  -1 |
++------+-------+-----+
+(1 row)
+
+jerryql> EXPLAIN SELECT * FROM people WHERE id = 4;
++--------------------------------+
+| QUERY PLAN                     |
++--------------------------------+
+| FILTER id = 4                  |
+|   -> PK LOOKUP people (id = 4) |
++--------------------------------+
+(2 rows)
+
+jerryql> EXPLAIN SELECT name FROM people WHERE id < 3 OR age > 40 ORDER BY name LIMIT 2;
++----------------------------------------+
+| QUERY PLAN                             |
++----------------------------------------+
+| PROJECT name                           |
+|   -> LIMIT 2                           |
+|     -> SORT BY name                    |
+|       -> FILTER (id < 3) OR (age > 40) |
+|         -> SEQ SCAN people             |
++----------------------------------------+
+(5 rows)
+

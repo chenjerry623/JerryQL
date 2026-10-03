@@ -1,1 +1,7 @@
+build*/
+*.exe
+*.db
+*.expected.actual
 /.vscode
+web/jerryql.js
+web/jerryql.wasm
