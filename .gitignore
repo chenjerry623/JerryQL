@@ -5,3 +5,4 @@ build*/
 /.vscode
 web/jerryql.js
 web/jerryql.wasm
+site/

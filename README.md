@@ -4,6 +4,9 @@ A small SQL database engine written from scratch in C++17: a lexer, a
 recursive-descent parser, a rule-based planner and a pull-based ("Volcano")
 executor, over a storage interface that an on-disk B+tree will implement next.
 
+**[Try it in your browser →](https://chenjerry623.github.io/JerryQL/)** The engine is
+compiled to WebAssembly and runs in the page, with no server.
+
 This is a learning and portfolio project. It covers well-known ground (see
 [References](#references)), and doesn't claim anything new.
 
@@ -13,6 +16,12 @@ This is a learning and portfolio project. It covers well-known ground (see
 cmake -S . -B build && cmake --build build -j
 ./build/jerryql --echo examples/demo.sql   # run the demo script
 ./build/jerryql                            # interactive prompt (.help, .quit)
+```
+
+Build the browser playground (needs [Emscripten](https://emscripten.org/docs/getting_started/downloads.html)):
+
+```sh
+web/build_site.sh && python3 -m http.server -d site 8000   # open http://localhost:8000
 ```
 
 Run the tests:
@@ -70,6 +79,7 @@ SQL text -> Lexer -> Parser -> AST -> Planner -> Operator tree -> Executor
 | Parser | `src/parser.cpp` | Hand-written recursive descent, one function per precedence level (`OR` < `AND` < `NOT` < comparison < `+ -` < `* /` < unary). Recovers at the next `;` after a syntax error. |
 | Planner | `src/planner.cpp` | Extracts a primary-key range from top-level `AND`ed comparisons such as `id >= 10 AND id < 20`, giving a point lookup, range scan or full scan. Detects contradictions like `id > 5 AND id < 3`. The full `WHERE` is still applied by a filter, so the range only limits how much is read. |
 | Executor | `src/executor.cpp` | Volcano-style operators (`Scan`, `Filter`, `Sort`, `Limit`, `Projection`), each with `next()`. Column names are resolved to indexes once at plan time, not per row. |
+| Browser build | `web/` | The same engine compiled with Emscripten behind a three-function C API (`jerryql_run`, `jerryql_reset`, `jerryql_free`). CI checks its output matches the native build byte for byte. |
 | Storage | `src/table_store.h` | Rows keyed by a 64-bit integer: the primary key, or a hidden row id. Ordered range scans. |
 
 Choices worth explaining:
@@ -100,7 +110,7 @@ Choices worth explaining:
 ## Roadmap
 
 1. ~~SQL front end: parser, planner, executor~~ (done)
-2. Browser demo (WebAssembly)
+2. ~~Browser demo (WebAssembly, deployed to GitHub Pages)~~ (done)
 3. On-disk B+tree storage with a page cache
 4. Write-ahead log with crash recovery, verified by a SIGKILL crash-injection harness
 5. Benchmarks against SQLite with documented settings

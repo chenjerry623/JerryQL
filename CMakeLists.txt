@@ -39,6 +39,8 @@ endif()
 
 if(EMSCRIPTEN)
   # Browser build: the engine plus a tiny C API, loaded by web/index.html.
+  # SQL errors are C++ exceptions, which Emscripten disables by default.
+  target_compile_options(jerryql_core PUBLIC -fexceptions)
   add_executable(jerryql_web web/wasm_api.cpp)
   target_link_libraries(jerryql_web PRIVATE jerryql_core)
   set_target_properties(jerryql_web PROPERTIES OUTPUT_NAME jerryql)
@@ -47,8 +49,11 @@ if(EMSCRIPTEN)
     -sEXPORT_NAME=createJerryQL
     -sENVIRONMENT=web,node
     -sALLOW_MEMORY_GROWTH=1
-    -sEXPORTED_FUNCTIONS=_jerryql_run,_jerryql_reset,_jerryql_free
-    -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString,stringToNewUTF8
+    -sEXPORTED_FUNCTIONS=_jerryql_run,_jerryql_reset,_jerryql_free,_malloc,_free
+    -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString
+    -sSINGLE_FILE=1
+    -sSINGLE_FILE_BINARY_ENCODE=0
+    -fexceptions
   )
   return()
 endif()
