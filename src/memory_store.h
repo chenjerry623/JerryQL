@@ -15,6 +15,10 @@ public:
     bool replace(int64_t key, Row row) override;
     bool erase(int64_t key) override;
     bool contains(int64_t key) const override;
+    std::optional<Row> get(int64_t key) const override {
+        auto it = rows_.find(key);
+        return it == rows_.end() ? std::nullopt : std::optional<Row>(it->second);
+    }
     std::unique_ptr<Cursor> scan(const KeyRange& range) const override;
     size_t size() const override { return rows_.size(); }
     int64_t allocateRowId() override { return ++lastRowId_; }

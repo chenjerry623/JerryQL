@@ -50,12 +50,15 @@ std::string payloadFor(int64_t key, size_t length) {
     return payload;
 }
 
+std::string k(int64_t key) { return encodeIntKey(key); }
+
 std::string scanAll(BTree& tree, int64_t lo, int64_t hi) {
     std::string out;
-    BTreeCursor cursor = tree.scan(lo, hi);
-    int64_t key;
-    std::string payload;
-    while (cursor.next(key, payload)) out += std::to_string(key) + ":" + std::to_string(payload.size()) + ",";
+    BTreeCursor cursor = tree.scan(k(lo), k(hi));
+    std::string key, payload;
+    while (cursor.next(key, payload)) {
+        out += std::to_string(decodeIntKey(key)) + ":" + std::to_string(payload.size()) + ",";
+    }
     return out;
 }
 
@@ -91,17 +94,17 @@ TEST(btreeRandomizedAgainstMap) {
         size_t length = randomInt(0, 9) == 0 ? kMaxPayload : size_t(randomInt(0, 120));
         int op = int(randomInt(0, 9));
         if (op <= 4) {
-            bool inserted = tree.insert(key, payloadFor(key, length));
+            bool inserted = tree.insert(k(key), payloadFor(key, length));
             CHECK_EQ(inserted, oracle.count(key) == 0);
             if (inserted) oracle[key] = payloadFor(key, length);
         } else if (op <= 6) {
-            bool replaced = tree.replace(key, payloadFor(key + 1, length));
+            bool replaced = tree.replace(k(key), payloadFor(key + 1, length));
             CHECK_EQ(replaced, oracle.count(key) == 1);
             if (replaced) oracle[key] = payloadFor(key + 1, length);
         } else if (op == 7) {
-            CHECK_EQ(tree.erase(key), oracle.erase(key) == 1);
+            CHECK_EQ(tree.erase(k(key)), oracle.erase(key) == 1);
         } else if (op == 8) {
-            auto found = tree.find(key);
+            auto found = tree.find(k(key));
             auto expected = oracle.find(key);
             CHECK_EQ(found.has_value(), expected != oracle.end());
             if (found && expected != oracle.end()) CHECK(*found == expected->second);
@@ -130,12 +133,12 @@ TEST(btreeGrowsToThreeLevels) {
     std::vector<int64_t> keys(150000);
     for (size_t i = 0; i < keys.size(); ++i) keys[i] = int64_t(i) * 3;
     std::shuffle(keys.begin(), keys.end(), rng);
-    for (int64_t key : keys) CHECK(tree.insert(key, payloadFor(key, 16)));
+    for (int64_t key : keys) CHECK(tree.insert(k(key), payloadFor(key, 16)));
     BTreeShape shape = tree.check();
     CHECK_EQ(shape.depth, 3);
     CHECK_EQ(tree.size(), uint64_t(150000));
-    CHECK(tree.find(299997).has_value());
-    CHECK(!tree.find(299998).has_value());
+    CHECK(tree.find(k(299997)).has_value());
+    CHECK(!tree.find(k(299998)).has_value());
     CHECK_EQ(scanAll(tree, 30, 40), std::string("30:16,33:16,36:16,39:16,"));
 }
 
@@ -146,9 +149,9 @@ TEST(btreeSequentialInsertsFillLeaves) {
     BTree shuffled(*pager, BTree::create(*pager));
     std::vector<int64_t> keys(50000);
     for (size_t i = 0; i < keys.size(); ++i) keys[i] = int64_t(i);
-    for (int64_t key : keys) sequential.insert(key, payloadFor(key, 20));
+    for (int64_t key : keys) sequential.insert(k(key), payloadFor(key, 20));
     std::shuffle(keys.begin(), keys.end(), std::mt19937(3));
-    for (int64_t key : keys) shuffled.insert(key, payloadFor(key, 20));
+    for (int64_t key : keys) shuffled.insert(k(key), payloadFor(key, 20));
 
     BTreeShape a = sequential.check(), b = shuffled.check();
     std::cout << "leaf fill: sequential " << a.leafFill << " (" << a.leafPages << " leaves), random "
@@ -161,27 +164,27 @@ TEST(btreeSequentialInsertsFillLeaves) {
 TEST(btreeReplaceThatGrowsSplitsTheLeaf) {
     auto pager = memoryPager(16);
     BTree tree(*pager, BTree::create(*pager));
-    for (int64_t key = 0; key < 30; ++key) tree.insert(key, payloadFor(key, 100));
+    for (int64_t key = 0; key < 30; ++key) tree.insert(k(key), payloadFor(key, 100));
     CHECK_EQ(tree.check().depth, 1);
-    for (int64_t key = 0; key < 30; ++key) CHECK(tree.replace(key, payloadFor(key, kMaxPayload)));
+    for (int64_t key = 0; key < 30; ++key) CHECK(tree.replace(k(key), payloadFor(key, kMaxPayload)));
     BTreeShape shape = tree.check();
     CHECK_EQ(shape.depth, 2);
     CHECK_EQ(tree.size(), uint64_t(30));
-    CHECK_EQ(tree.find(17)->size(), kMaxPayload);
-    CHECK(!tree.replace(99, "x"));
+    CHECK_EQ(tree.find(k(17))->size(), kMaxPayload);
+    CHECK(!tree.replace(k(99), "x"));
 }
 
 TEST(btreeEraseEverythingThenReuse) {
     auto pager = memoryPager(16);
     BTree tree(*pager, BTree::create(*pager));
-    for (int64_t key = 0; key < 5000; ++key) tree.insert(key, payloadFor(key, 50));
-    for (int64_t key = 0; key < 5000; key += 2) CHECK(tree.erase(key));
+    for (int64_t key = 0; key < 5000; ++key) tree.insert(k(key), payloadFor(key, 50));
+    for (int64_t key = 0; key < 5000; key += 2) CHECK(tree.erase(k(key)));
     CHECK_EQ(scanAll(tree, 0, 7), std::string("1:50,3:50,5:50,7:50,"));
-    for (int64_t key = 1; key < 5000; key += 2) CHECK(tree.erase(key));
+    for (int64_t key = 1; key < 5000; key += 2) CHECK(tree.erase(k(key)));
     CHECK_EQ(tree.size(), uint64_t(0));
     CHECK_EQ(scanAll(tree, INT64_MIN, INT64_MAX), std::string(""));
     tree.check();  // empty leaves are allowed; ordering and links still hold
-    for (int64_t key = 0; key < 100; ++key) CHECK(tree.insert(key, "again"));
+    for (int64_t key = 0; key < 100; ++key) CHECK(tree.insert(k(key), "again"));
     CHECK_EQ(tree.size(), uint64_t(100));
     tree.check();
 }
@@ -189,13 +192,14 @@ TEST(btreeEraseEverythingThenReuse) {
 TEST(btreeEdgeKeysAndEmptyRanges) {
     auto pager = memoryPager(16);
     BTree tree(*pager, BTree::create(*pager));
-    tree.insert(INT64_MIN, "min");
-    tree.insert(INT64_MAX, "max");
-    tree.insert(0, "zero");
+    tree.insert(k(INT64_MIN), "min");
+    tree.insert(k(INT64_MAX), "max");
+    tree.insert(k(0), "zero");
     CHECK_EQ(scanAll(tree, INT64_MIN, INT64_MAX), std::string("-9223372036854775808:3,0:4,9223372036854775807:3,"));
     CHECK_EQ(scanAll(tree, 1, 0), std::string(""));
     CHECK_EQ(scanAll(tree, INT64_MAX, INT64_MAX), std::string("9223372036854775807:3,"));
-    CHECK_THROWS(tree.insert(5, std::string(kMaxPayload + 1, 'x')), std::invalid_argument, "too large");
+    CHECK_THROWS(tree.insert(k(5), std::string(kMaxPayload + 1, 'x')), std::invalid_argument, "too large");
+    CHECK_THROWS(tree.insert(std::string(kMaxKeySize + 1, 'k'), "x"), std::invalid_argument, "too large");
 }
 
 TEST(droppedTablePagesAreReused) {
@@ -331,4 +335,75 @@ TEST(btreeStoreMatchesMemoryStore) {
     }
     CHECK(!a->next(ka, ra));
     CHECK_EQ(btree.size(), rows);
+}
+
+TEST(intKeysSortLikeIntegers) {
+    std::vector<int64_t> values = {INT64_MIN, -1000000, -256, -1, 0, 1, 255, 256, 1000000, INT64_MAX};
+    for (size_t i = 0; i + 1 < values.size(); ++i) {
+        CHECK(compareKeys(k(values[i]), k(values[i + 1])) < 0);
+        CHECK_EQ(decodeIntKey(k(values[i])), values[i]);
+    }
+}
+
+// Variable-length keys from 1 to kMaxKeySize bytes, checked against
+// std::map<std::string>. Long keys force internal nodes to split by bytes.
+// Reproduce with JERRYQL_SEED=<seed> ./jerryql_tests btreeVariableKeys
+TEST(btreeVariableKeysAgainstMap) {
+    const unsigned seed = testSeed(7);
+    std::cout << "btreeVariableKeysAgainstMap seed=" << seed << "\n";
+    std::mt19937 rng(seed);
+    auto randomKey = [&]() {
+        // Short keys share prefixes; some keys are long enough to fill internal pages fast.
+        size_t length = rng() % 4 == 0 ? 1 + rng() % kMaxKeySize : 1 + rng() % 6;
+        std::string key(length, 'a');
+        for (char& c : key) c = char("abc\x00\xff"[rng() % 5]);
+        return key;
+    };
+    auto pager = memoryPager(16);
+    BTree tree(*pager, BTree::create(*pager));
+    std::map<std::string, std::string> oracle;
+    for (int step = 0; step < 20000; ++step) {
+        std::string key = randomKey();
+        std::string payload(rng() % 60, char('0' + rng() % 10));
+        switch (rng() % 6) {
+            case 0: case 1: case 2: {
+                bool inserted = tree.insert(key, payload);
+                CHECK_EQ(inserted, oracle.count(key) == 0);
+                if (inserted) oracle[key] = payload;
+                break;
+            }
+            case 3:
+                CHECK_EQ(tree.erase(key), oracle.erase(key) == 1);
+                break;
+            case 4: {
+                auto found = tree.find(key);
+                auto expected = oracle.find(key);
+                CHECK_EQ(found.has_value(), expected != oracle.end());
+                if (found && expected != oracle.end()) CHECK(*found == expected->second);
+                break;
+            }
+            default: {
+                std::string lo = randomKey(), hi = randomKey();
+                if (lo > hi) std::swap(lo, hi);
+                BTreeCursor cursor = tree.scan(lo, hi);
+                std::string ck, cv;
+                auto it = oracle.lower_bound(lo);
+                bool same = true;
+                while (cursor.next(ck, cv)) {
+                    if (it == oracle.end() || it->first != ck || it->second != cv) { same = false; break; }
+                    ++it;
+                }
+                if (same && it != oracle.end() && it->first <= hi) same = false;
+                if (!same) {
+                    CHECK(same);
+                    std::cerr << "  range scan diverged at step " << step << " with seed " << seed << "\n";
+                    return;
+                }
+            }
+        }
+        if (step % 2000 == 0) tree.check();
+    }
+    BTreeShape shape = tree.check();
+    CHECK(shape.depth >= 3);
+    CHECK_EQ(tree.size(), uint64_t(oracle.size()));
 }

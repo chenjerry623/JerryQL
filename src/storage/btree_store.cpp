@@ -11,10 +11,10 @@ public:
     explicit BTreeRowCursor(BTreeCursor cursor) : cursor_(std::move(cursor)) {}
 
     bool next(int64_t& key, Row& row) override {
-        const char* payload;
-        size_t length;
-        if (!cursor_.nextRaw(key, payload, length)) return false;
-        decodeRowInto(payload, length, row);
+        std::string_view rawKey, payload;
+        if (!cursor_.nextRaw(rawKey, payload)) return false;
+        key = decodeIntKey(rawKey);
+        decodeRowInto(payload.data(), payload.size(), row);
         return true;
     }
 
@@ -25,24 +25,32 @@ private:
 }  // namespace
 
 bool BTreeStore::insert(int64_t key, Row row) {
-    return tree_.insert(key, encodeRow(row));
+    return tree_.insert(encodeIntKey(key), encodeRow(row));
 }
 
 bool BTreeStore::replace(int64_t key, Row row) {
-    return tree_.replace(key, encodeRow(row));
+    return tree_.replace(encodeIntKey(key), encodeRow(row));
 }
 
 bool BTreeStore::erase(int64_t key) {
-    return tree_.erase(key);
+    return tree_.erase(encodeIntKey(key));
 }
 
 bool BTreeStore::contains(int64_t key) const {
-    return tree_.find(key).has_value();
+    return tree_.find(encodeIntKey(key)).has_value();
+}
+
+std::optional<Row> BTreeStore::get(int64_t key) const {
+    std::optional<std::string> payload = tree_.find(encodeIntKey(key));
+    if (!payload) return std::nullopt;
+    return decodeRow(*payload);
 }
 
 std::unique_ptr<Cursor> BTreeStore::scan(const KeyRange& range) const {
-    if (range.empty) return std::make_unique<BTreeRowCursor>(tree_.scan(1, 0));
-    return std::make_unique<BTreeRowCursor>(tree_.scan(range.lo, range.hi));
+    if (range.empty) {
+        return std::make_unique<BTreeRowCursor>(tree_.scan(encodeIntKey(1), encodeIntKey(0)));
+    }
+    return std::make_unique<BTreeRowCursor>(tree_.scan(encodeIntKey(range.lo), encodeIntKey(range.hi)));
 }
 
 size_t BTreeStore::size() const {

@@ -74,11 +74,10 @@ Table Catalog::makeTable(int64_t id, const std::string& name, Schema schema, Pag
 }
 
 void Catalog::loadTables() {
-    BTreeCursor cursor = schemaTree_.scan(std::numeric_limits<int64_t>::min(),
-                                          std::numeric_limits<int64_t>::max());
-    int64_t id;
-    std::string payload;
-    while (cursor.next(id, payload)) {
+    BTreeCursor cursor = schemaTree_.scan("", std::nullopt);
+    std::string key, payload;
+    while (cursor.next(key, payload)) {
+        int64_t id = decodeIntKey(key);
         Row record = decodeRow(payload);  // (name, sql, root page)
         const std::string& name = record.at(0).asText();
         Statement statement = parseOne(record.at(1).asText());
@@ -99,7 +98,7 @@ Table& Catalog::createTable(const std::string& name, Schema schema) {
     table.id = int64_t(schemaTree_.aux()) + 1;
     schemaTree_.setAux(uint64_t(table.id));
     table.store = std::make_unique<BTreeStore>(pager_, table.root);
-    schemaTree_.insert(table.id, encodeRow({Value::text(name), Value::text(table.toCreateSql()),
+    schemaTree_.insert(encodeIntKey(table.id), encodeRow({Value::text(name), Value::text(table.toCreateSql()),
                                             Value::integer(table.root)}));
     return tables_.emplace(name, std::move(table)).first->second;
 }
@@ -108,7 +107,7 @@ bool Catalog::dropTable(const std::string& name) {
     auto it = tables_.find(name);
     if (it == tables_.end()) return false;
     BTree(pager_, it->second.root).destroy();
-    schemaTree_.erase(it->second.id);
+    schemaTree_.erase(encodeIntKey(it->second.id));
     tables_.erase(it);
     return true;
 }

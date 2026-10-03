@@ -30,7 +30,7 @@ struct PagerStats {
 //
 // Database file: page 0 is the header, page 1 the schema tree root, the rest
 // B+tree nodes or free pages. Header fields:
-//   [0, 8)   magic "JERRYQL1"
+//   [0, 8)   magic "JERRYQL2" (format 2: byte-string B+tree keys)
 //   [8, 12)  page size (4096)
 //   [12, 16) page count (pages ever allocated, including free ones)
 //   [16, 20) first page of the freelist (0 = empty)

@@ -9,7 +9,7 @@ namespace jerryql {
 
 namespace {
 
-constexpr char kMagic[8] = {'J', 'E', 'R', 'R', 'Y', 'Q', 'L', '1'};
+constexpr char kMagic[8] = {'J', 'E', 'R', 'R', 'Y', 'Q', 'L', '2'};  // 2: byte-string keys
 
 uint32_t readU32(const char* p) {
     uint32_t v;

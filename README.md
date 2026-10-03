@@ -133,23 +133,28 @@ OS page size and SQLite's default page size.
   `sqlite_master`. Opening a file re-parses that SQL, so the catalog has no
   separate serialization format.
 
-**Node layout.** Leaves are slotted pages:
+**Keys.** B+tree keys are byte strings compared with `memcmp`. Table keys
+are 64-bit integers encoded big-endian with the sign bit flipped, so byte
+order equals numeric order. Secondary indexes use composite keys (below).
+
+**Node layout.** Both leaves and internal nodes are slotted pages:
 
 ```
-| header (24 B) | slot array: u16 offsets, sorted by key -> |   free   | <- cells: i64 key, u16 len, row bytes |
+leaf:     | header (24 B) | slots: u16 offsets -> |  free  | <- cells: u16 key len, u16 row len, key, row |
+internal: | header | child0 | slots -> |  free  | <- cells: u32 child, u16 key len, key |
 ```
 
 - Lookups binary-search the slot array directly in the page buffer, with no
   decoding or copying.
 - Writes decode the node, modify it and re-encode it. That's simpler, and
   costs a 4 KiB copy.
-- Internal nodes hold `child0, (key, child)...`, which allows up to 339 keys
-  per node (fanout 340).
+- With 8-byte table keys an internal node holds about 250 separators. Keys
+  can be up to 256 bytes.
 - Leaves are linked left to right, so a range scan finds its first key and
   then walks the leaves.
 
 **Split policy.**
-- An overfull leaf splits at the byte midpoint, not the cell-count
+- An overfull leaf, or internal node, splits at the byte midpoint, not the cell-count
   midpoint, so pages with uneven row sizes still split into halves with
   similar free space.
 - Inserting past the last key of the rightmost leaf (append-order keys) is
@@ -160,8 +165,8 @@ Measured in `tests/test_btree.cpp`, with 50,000 keys and 20-byte rows:
 
 | Insert order | Leaf fill | Leaf pages |
 |---|---:|---:|
-| Sequential | 99.7% | 394 |
-| Random | 69.0% | 571 |
+| Sequential | 99.2% | 421 |
+| Random | 69.6% | 601 |
 
 69% is the textbook expectation for random inserts (about ln 2). The same
 append trick appears in SQLite's balance_quick and PostgreSQL's

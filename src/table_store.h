@@ -40,6 +40,7 @@ public:
     virtual bool replace(int64_t key, Row row) = 0; // false if the key is missing
     virtual bool erase(int64_t key) = 0;            // false if the key is missing
     virtual bool contains(int64_t key) const = 0;
+    virtual std::optional<Row> get(int64_t key) const = 0;
     virtual std::unique_ptr<Cursor> scan(const KeyRange& range) const = 0;
     virtual size_t size() const = 0;
     // A fresh hidden key for tables without a primary key. Never reused.
