@@ -64,6 +64,8 @@ bool setupBank(Database& db) {
     db.execute("CREATE TABLE accounts (id INT PRIMARY KEY, balance INT)");
     db.execute("CREATE TABLE ledger (txn INT PRIMARY KEY, src INT, dst INT, amount INT, note TEXT)");
     db.execute("CREATE TABLE scratch (k INT PRIMARY KEY, body TEXT)");
+    db.execute("CREATE INDEX ledger_src ON ledger (src)");
+    db.execute("CREATE INDEX ledger_amount ON ledger (amount)");
     std::string sql = "INSERT INTO accounts VALUES ";
     for (int id = 1; id <= kAccounts; ++id) {
         sql += (id > 1 ? ", (" : "(") + std::to_string(id) + ", " + std::to_string(kInitialBalance) + ")";
@@ -97,12 +99,13 @@ VerifyResult verifyBank(Database& db, const Acknowledged& acks) {
         else if (!db.tableNames().empty()) result.error = "partial setup: some tables exist";
         return result;
     }
-    try {
-        for (const std::string& name : db.tableNames()) {
-            static_cast<BTreeStore&>(*db.table(name).store).tree().check();
-        }
-    } catch (const std::exception& e) {
-        result.error = std::string("B+tree check failed: ") + e.what();
+    std::string problem = db.checkIntegrity();
+    if (!problem.empty()) {
+        result.error = "integrity check failed: " + problem;
+        return result;
+    }
+    if (db.table("ledger").indexes.size() != 2) {
+        result.error = "ledger indexes missing after recovery";
         return result;
     }
 

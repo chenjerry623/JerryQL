@@ -13,6 +13,7 @@ namespace jerryql::crash {
 //
 //   accounts(id INT PRIMARY KEY, balance INT)    50 accounts, 1000 each
 //   ledger(txn INT PRIMARY KEY, src INT, dst INT, amount INT, note TEXT)
+//                                                indexed on src and on amount
 //   scratch(k INT PRIMARY KEY, body TEXT)        churn: big rows, splits, frees
 //
 // A transfer moves money between two accounts and records it in the ledger,
@@ -21,7 +22,8 @@ namespace jerryql::crash {
 //   - no acknowledged ROLLBACK is in the ledger
 //   - balances equal 1000 + the replay of the ledger, so no transaction is
 //     half-applied (and the total is still 50,000)
-//   - every table's B+tree passes its structural check
+//   - every B+tree passes its structural check, and both ledger indexes
+//     (on src and amount) hold exactly one correct entry per ledger row
 constexpr int kAccounts = 50;
 constexpr int64_t kInitialBalance = 1000;
 

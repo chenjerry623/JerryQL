@@ -70,6 +70,9 @@ jerryql> EXPLAIN SELECT name FROM employees WHERE id >= 2 AND id < 5;
 - Transactions: `BEGIN` / `COMMIT` / `ROLLBACK`. Outside a transaction,
   each write statement commits on its own.
 
+- Secondary indexes: `CREATE INDEX name ON table (column)`, `DROP INDEX`.
+  The planner uses them for `=`, `<`, `<=`, `>`, `>=` and ranges, and
+  `EXPLAIN` shows which one it picked.
 - Aggregates: `COUNT(*)`, `COUNT`, `SUM`, `MIN`, `MAX`, `AVG` (integer
   result), with `GROUP BY` on any expressions, `HAVING`, and `ORDER BY` on
   aggregates or aliases. `LIMIT n OFFSET m`.
@@ -98,7 +101,8 @@ SQL text -> Lexer -> Parser -> AST -> Planner -> Operator tree -> Executor
 | Executor | `src/executor.cpp` | Volcano-style operators (`Scan`, `Filter`, `Aggregate`, `Sort`, `Limit`, `Projection`), each with `next()`. Column names are resolved to indexes once at plan time, not per row. |
 | Browser build | `web/` | The same engine compiled with Emscripten behind a three-function C API (`jerryql_run`, `jerryql_reset`, `jerryql_free`). CI checks its output matches the native build byte for byte. |
 | Storage interface | `src/table_store.h` | Rows keyed by a 64-bit integer: the primary key, or a hidden row id. Ordered range scans. |
-| B+tree | `src/storage/btree.cpp` | One tree per table, rows stored in the leaves (a clustered table, like SQLite's rowid tables). |
+| B+tree | `src/storage/btree.cpp` | Byte-string keys. One tree per table, rows stored in the leaves (a clustered table, like SQLite's rowid tables), plus one per secondary index. |
+| Index keys | `src/storage/index_key.cpp` | Order-preserving, prefix-free value encoding for composite index keys. |
 | Buffer pool | `src/storage/buffer_pool.cpp` | Fixed number of 4 KiB frames, pin counts, LRU eviction, dirty write-back. |
 | Pager | `src/storage/pager.cpp` | Header page, page allocation, freelist; commit, rollback, checkpoint, recovery. |
 | Write-ahead log | `src/storage/wal.cpp` | Checksummed full-page frames; finds the last valid commit on open. |
@@ -184,6 +188,57 @@ and the table's last row id.
   underfull pages until `DROP TABLE` returns them to the freelist.
 - Single-threaded.
 - Byte order is the host's (little-endian on x86 and WebAssembly).
+
+## Secondary indexes
+
+**Entries.** An index is another B+tree in the same file. Its keys are
+`encode(column value) + encode(primary key)`, with no payload. Equal values
+sort together, ordered by primary key, and every entry is unique even when
+values repeat. The value encoding preserves order under `memcmp` and is
+prefix-free:
+- `INT`: a type byte, then 8 bytes, big-endian with the sign bit flipped.
+- `TEXT`: a type byte, then the bytes with NUL escaped as `00 FF`, then
+  `00 00`.
+
+So `'ab' < 'ab\0' < 'abc'`, and no value's encoding is a prefix of another's.
+
+**Range scans become key ranges.** `amount >= 100 AND amount < 300`
+becomes the byte range `[enc(100), enc(300))`. An index scan walks that
+range and fetches each row from the table by its primary key.
+
+**Plan choice**, in order of preference:
+1. A primary-key lookup or range, since the table is clustered on its key.
+2. An index with an equality condition.
+3. An index with a range condition.
+4. A full scan.
+
+The whole `WHERE` clause is still applied as a filter afterwards.
+Contradictory ranges (`x > 5 AND x < 3`) produce an empty scan.
+
+**Maintenance.**
+- `INSERT`, `UPDATE` and `DELETE` update every index in the same write-ahead
+  log transaction as the table, so a crash or `ROLLBACK` can never leave an
+  index out of step.
+- An `UPDATE` only touches the indexes whose column actually changed.
+- `CREATE INDEX` checks every existing value before writing anything, then
+  fills the index from a table scan.
+
+**Verification.**
+- `.check` (`Database::checkIntegrity`) checks every B+tree's structure,
+  and that each index holds exactly one entry per row, carrying that row's
+  current value.
+- A differential test runs the same random inserts, updates (including
+  primary-key moves), deletes and range queries against an indexed and an
+  unindexed database, and requires identical results.
+- The crash harness's ledger table has two indexes, and recovery has to
+  bring them back exactly consistent.
+
+**Limits:**
+- One column per index.
+- Index keys are capped at 256 bytes, so very long `TEXT` values can't be
+  indexed. A row with such a value is rejected before any write.
+- No index-only scans; every match fetches its row.
+- No `ORDER BY` via index order.
 
 ## Write-ahead log and crash recovery
 
@@ -412,7 +467,9 @@ disk. The ratios are more meaningful than the absolute numbers.
 4. ~~Write-ahead log with crash recovery, verified by crash-injection harnesses~~ (done)
 5. ~~Benchmarks against SQLite with documented settings~~ (done)
 6. ~~Profile and speed up full scans~~ (done: 4.9× → 1.2× SQLite's time)
-7. Aggregates and `GROUP BY`; secondary indexes; joins
+7. ~~Aggregates and `GROUP BY`~~ (done)
+8. ~~Secondary indexes~~ (done)
+9. Joins
 
 ## References
 

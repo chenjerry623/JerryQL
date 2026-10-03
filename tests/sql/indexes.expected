@@ -1,0 +1,161 @@
+jerryql> CREATE TABLE orders (id INT PRIMARY KEY, city TEXT, amount INT);
+CREATE TABLE
+
+jerryql> INSERT INTO orders VALUES (1, 'Tokyo', 100), (2, 'Lima', 250), (3, 'Tokyo', 75), (4, 'Paris', 300),
+  (5, 'Lima', 25), (6, 'Tokyo', 300), (7, 'Oslo', 150);
+INSERT 7
+
+jerryql> CREATE INDEX orders_city ON orders (city);
+CREATE INDEX
+
+jerryql> CREATE INDEX orders_amount ON orders (amount);
+CREATE INDEX
+
+jerryql> EXPLAIN SELECT * FROM orders WHERE city = 'Tokyo';
++-----------------------------------------------------------+
+| QUERY PLAN                                                |
++-----------------------------------------------------------+
+| FILTER city = 'Tokyo'                                     |
+|   -> INDEX SCAN orders USING orders_city (city = 'Tokyo') |
++-----------------------------------------------------------+
+(2 rows)
+
+jerryql> SELECT * FROM orders WHERE city = 'Tokyo';
++----+-------+--------+
+| id | city  | amount |
++----+-------+--------+
+|  1 | Tokyo |    100 |
+|  3 | Tokyo |     75 |
+|  6 | Tokyo |    300 |
++----+-------+--------+
+(3 rows)
+
+jerryql> EXPLAIN SELECT id, amount FROM orders WHERE amount >= 100 AND amount < 300;
++--------------------------------------------------------------------+
+| QUERY PLAN                                                         |
++--------------------------------------------------------------------+
+| PROJECT id, amount                                                 |
+|   -> FILTER (amount >= 100) AND (amount < 300)                     |
+|     -> INDEX SCAN orders USING orders_amount (100 <= amount < 300) |
++--------------------------------------------------------------------+
+(3 rows)
+
+jerryql> SELECT id, amount FROM orders WHERE amount >= 100 AND amount < 300;
++----+--------+
+| id | amount |
++----+--------+
+|  1 |    100 |
+|  7 |    150 |
+|  2 |    250 |
++----+--------+
+(3 rows)
+
+jerryql> SELECT id FROM orders WHERE city > 'M';
++----+
+| id |
++----+
+|  7 |
+|  4 |
+|  1 |
+|  3 |
+|  6 |
++----+
+(5 rows)
+
+jerryql> EXPLAIN SELECT id FROM orders WHERE id = 3 AND city = 'Tokyo';
++-------------------------------------------+
+| QUERY PLAN                                |
++-------------------------------------------+
+| PROJECT id                                |
+|   -> FILTER (id = 3) AND (city = 'Tokyo') |
+|     -> PK LOOKUP orders (id = 3)          |
++-------------------------------------------+
+(3 rows)
+
+jerryql> EXPLAIN SELECT id FROM orders WHERE amount > 50 AND city = 'Lima';
++------------------------------------------------------------+
+| QUERY PLAN                                                 |
++------------------------------------------------------------+
+| PROJECT id                                                 |
+|   -> FILTER (amount > 50) AND (city = 'Lima')              |
+|     -> INDEX SCAN orders USING orders_city (city = 'Lima') |
++------------------------------------------------------------+
+(3 rows)
+
+jerryql> SELECT city, COUNT(*), SUM(amount) FROM orders WHERE city >= 'L' AND city < 'P' GROUP BY city;
++------+----------+-------------+
+| city | COUNT(*) | SUM(amount) |
++------+----------+-------------+
+| Lima |        2 |         275 |
+| Oslo |        1 |         150 |
++------+----------+-------------+
+(2 rows)
+
+jerryql> UPDATE orders SET city = 'Kyoto' WHERE id = 1;
+UPDATE 1
+
+jerryql> UPDATE orders SET id = id + 100 WHERE city = 'Lima';
+UPDATE 2
+
+jerryql> DELETE FROM orders WHERE amount = 300;
+DELETE 2
+
+jerryql> SELECT id, city FROM orders WHERE city = 'Tokyo';
++----+-------+
+| id | city  |
++----+-------+
+|  3 | Tokyo |
++----+-------+
+(1 row)
+
+jerryql> SELECT id, city FROM orders WHERE city = 'Kyoto';
++----+-------+
+| id | city  |
++----+-------+
+|  1 | Kyoto |
++----+-------+
+(1 row)
+
+jerryql> SELECT id, city FROM orders WHERE city = 'Lima';
++-----+------+
+| id  | city |
++-----+------+
+| 102 | Lima |
+| 105 | Lima |
++-----+------+
+(2 rows)
+
+jerryql> SELECT id FROM orders WHERE amount > 1000;
++----+
+| id |
++----+
+(0 rows)
+
+jerryql> DROP INDEX orders_city;
+DROP INDEX
+
+jerryql> EXPLAIN SELECT id FROM orders WHERE city = 'Lima';
++---------------------------+
+| QUERY PLAN                |
++---------------------------+
+| PROJECT id                |
+|   -> FILTER city = 'Lima' |
+|     -> SEQ SCAN orders    |
++---------------------------+
+(3 rows)
+
+jerryql> CREATE INDEX orders_amount ON orders (city);
+Error: index orders_amount already exists
+
+jerryql> CREATE INDEX again ON orders (amount);
+Error: column amount already has an index
+
+jerryql> CREATE INDEX by_id ON orders (id);
+Error: column id is the primary key, which the table is already sorted by
+
+jerryql> CREATE INDEX nope ON orders (missing);
+Error: no such column: missing
+
+jerryql> DROP INDEX orders_city;
+Error: no such index: orders_city
+

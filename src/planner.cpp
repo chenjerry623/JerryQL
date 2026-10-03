@@ -4,6 +4,7 @@
 #include <limits>
 
 #include "expr_eval.h"
+#include "storage/index_key.h"
 #include "sql_error.h"
 
 namespace jerryql {
@@ -104,11 +105,113 @@ KeyRange primaryKeyRange(const Expr* where, const Schema& schema) {
     return range;
 }
 
+namespace {
+
+struct Bound {
+    Value value;
+    bool inclusive;
+};
+
+// The value range an indexed column must fall in, from AND-ed comparisons.
+struct ColumnRange {
+    std::optional<Bound> lo, hi;
+    bool hasEquality = false;
+    bool empty = false;
+
+    void tightenLower(const Value& v, bool inclusive) {
+        if (!lo) { lo = Bound{v, inclusive}; return; }
+        int c = compareValues(v, lo->value);
+        if (c > 0 || (c == 0 && !inclusive)) lo = Bound{v, inclusive};
+    }
+    void tightenUpper(const Value& v, bool inclusive) {
+        if (!hi) { hi = Bound{v, inclusive}; return; }
+        int c = compareValues(v, hi->value);
+        if (c < 0 || (c == 0 && !inclusive)) hi = Bound{v, inclusive};
+    }
+    bool apply(BinaryOp op, const Value& v) {
+        switch (op) {
+            case BinaryOp::Eq: tightenLower(v, true); tightenUpper(v, true); hasEquality = true; break;
+            case BinaryOp::Gt: tightenLower(v, false); break;
+            case BinaryOp::Ge: tightenLower(v, true); break;
+            case BinaryOp::Lt: tightenUpper(v, false); break;
+            case BinaryOp::Le: tightenUpper(v, true); break;
+            default: return false;
+        }
+        if (lo && hi) {
+            int c = compareValues(lo->value, hi->value);
+            if (c > 0 || (c == 0 && !(lo->inclusive && hi->inclusive))) empty = true;
+        }
+        return true;
+    }
+};
+
+std::string describeIndexRange(const std::string& column, const ColumnRange& range) {
+    if (range.lo && range.hi && compareValues(range.lo->value, range.hi->value) == 0 &&
+        range.lo->inclusive && range.hi->inclusive) {
+        return column + " = " + range.lo->value.toSqlLiteral();
+    }
+    std::string text;
+    if (range.lo) text += range.lo->value.toSqlLiteral() + (range.lo->inclusive ? " <= " : " < ");
+    text += column;
+    if (range.hi) text += (range.hi->inclusive ? " <= " : " < ") + range.hi->value.toSqlLiteral();
+    return text;
+}
+
+// Picks an index for "column <op> literal" conjuncts: an index with an
+// equality condition if there is one, otherwise the first index with a range.
+OperatorPtr tryIndexScan(const Table& table, const Expr* where) {
+    std::vector<const Expr*> conjuncts;
+    collectConjuncts(where, conjuncts);
+    const Index* best = nullptr;
+    ColumnRange bestRange;
+    for (const Index& index : table.indexes) {
+        const Column& column = table.schema.columns[index.column];
+        ColumnRange range;
+        bool used = false;
+        for (const Expr* c : conjuncts) {
+            if (c->kind != ExprKind::Binary) continue;
+            const Expr* literal = nullptr;
+            BinaryOp op = c->binaryOp;
+            if (isColumn(*c->left, column.name) && c->right->kind == ExprKind::Literal) {
+                literal = c->right.get();
+            } else if (c->left->kind == ExprKind::Literal && isColumn(*c->right, column.name)) {
+                literal = c->left.get();
+                op = mirror(op);
+            }
+            if (!literal || literal->value.type() != column.type) continue;
+            used = range.apply(op, literal->value) || used;
+        }
+        if (!used) continue;
+        if (!best || (range.hasEquality && !bestRange.hasEquality)) {
+            best = &index;
+            bestRange = range;
+        }
+    }
+    if (!best) return nullptr;
+
+    const std::string& columnName = table.schema.columns[best->column].name;
+    std::string description = "INDEX SCAN " + table.name + " USING " + best->name + " (" +
+                              describeIndexRange(columnName, bestRange) + ")";
+    if (bestRange.empty) {
+        return std::make_unique<ScanOperator>(*table.store, KeyRange{0, 0, true},
+                                              "EMPTY SCAN " + table.name + " (WHERE can never match)");
+    }
+    std::string lo = bestRange.lo ? indexLowerBound(bestRange.lo->value, bestRange.lo->inclusive) : "";
+    std::optional<std::string> hi;
+    if (bestRange.hi) hi = indexUpperBound(bestRange.hi->value, bestRange.hi->inclusive);
+    return std::make_unique<IndexScanOperator>(*table.store, *best->tree, lo, hi, description);
+}
+
+}  // namespace
+
+// Access path, in order of preference: a primary-key lookup or range scan
+// (the table is clustered on its key), then a secondary index, then a full scan.
 OperatorPtr planRowSource(const Table& table, Expr* where) {
     if (where) bindColumns(*where, table.schema);
     KeyRange range = primaryKeyRange(where, table.schema);
-    OperatorPtr plan =
-        std::make_unique<ScanOperator>(*table.store, range, describeScan(table, range));
+    OperatorPtr plan;
+    if (range.isAll() && where) plan = tryIndexScan(table, where);
+    if (!plan) plan = std::make_unique<ScanOperator>(*table.store, range, describeScan(table, range));
     if (where) plan = std::make_unique<FilterOperator>(std::move(plan), *where);
     return plan;
 }

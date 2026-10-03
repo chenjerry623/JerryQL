@@ -151,6 +151,7 @@ int main(int argc, char** argv) {
     jerryql::DatabaseOptions dbOptions{options.poolPages};
     std::vector<Series> all;
     double loadSeconds = 0;
+    double indexBuildSeconds = 0;
     uint32_t pages = 0;
 
     {
@@ -167,6 +168,18 @@ int main(int argc, char** argv) {
         all.push_back(pointLookups(db, options, "PK point lookup (warm)", options.lookups, rng));
         all.push_back(rangeScans(db, options, rng));
         all.push_back(fullScans(db, options, rng));
+
+        // Same lookup on k again, after indexing it.
+        auto indexStart = Clock::now();
+        db.execute("CREATE INDEX t_k ON t (k)");
+        indexBuildSeconds = elapsedMicros(indexStart) / 1e6;
+        std::uniform_int_distribution<int64_t> anyRow(0, options.rows - 1);
+        Series indexed{"Secondary index lookup on k (warm)", {}};
+        for (int i = 0; i < options.lookups; ++i) {
+            indexed.micros.push_back(
+                timeQuery(db, "SELECT * FROM t WHERE k = " + std::to_string(anyRow(rng)), 1));
+        }
+        all.push_back(std::move(indexed));
         const jerryql::BufferPoolStats& stats = db.pager().pool().stats();
         std::cout << "buffer pool: " << options.poolPages << " pages, hits " << stats.hits
                   << ", misses " << stats.misses << "\n";
@@ -183,8 +196,12 @@ int main(int argc, char** argv) {
                   << percentile(s.micros, 0.5) << " | " << percentile(s.micros, 0.95) << " |\n";
     }
     double pk = percentile(all[1].micros, 0.5), scan = percentile(all[3].micros, 0.5);
+    double secondary = percentile(all[4].micros, 0.5);
     std::cout << "\nPK lookup vs full scan (median, warm): " << std::setprecision(0) << scan / pk
-              << "x faster\n";
+              << "x faster\n"
+              << "Secondary index lookup vs full scan (median, warm): " << scan / secondary << "x faster\n"
+              << "CREATE INDEX over " << options.rows << " rows: " << std::setprecision(2)
+              << indexBuildSeconds << " s\n";
     writeCsv(all, options.csvPath);
     std::remove(options.dbPath.c_str());
     return 0;

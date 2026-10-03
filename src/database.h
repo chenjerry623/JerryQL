@@ -48,6 +48,11 @@ public:
     Pager& pager() { return *pager_; }
     bool inTransaction() const { return inTransaction_; }
 
+    // Checks every B+tree's structure and that each index holds exactly one
+    // entry per row, carrying the row's current value. Returns "" if all is
+    // consistent, otherwise a description of the first problem.
+    std::string checkIntegrity();
+
 private:
     QueryResult createTable(const CreateTableStmt& stmt);
     QueryResult dropTable(const DropTableStmt& stmt);
@@ -55,6 +60,8 @@ private:
     QueryResult select(SelectStmt& stmt);
     QueryResult update(UpdateStmt& stmt);
     QueryResult remove(DeleteStmt& stmt);
+    QueryResult createIndex(const CreateIndexStmt& stmt);
+    QueryResult dropIndex(const DropIndexStmt& stmt);
     QueryResult transaction(const TransactionStmt& stmt);
     QueryResult runWrite(Statement& statement);
     void rollbackAndReload();

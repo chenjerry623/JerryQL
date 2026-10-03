@@ -143,7 +143,11 @@ char* jerryql_tables_json() {
                ",\"rows\":" + std::to_string(table.store->size()) + ",\"primaryKey\":" +
                (table.schema.primaryKey ? jsonString(table.schema.columns[*table.schema.primaryKey].name)
                                         : std::string("null")) +
-               "}";
+               ",\"indexes\":[";
+        for (size_t i = 0; i < table.indexes.size(); ++i) {
+            out += (i ? "," : "") + jsonString(table.indexSql(table.indexes[i]));
+        }
+        out += "]}";
     }
     return copyToHeap(out + "]}");
 }

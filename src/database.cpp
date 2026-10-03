@@ -7,6 +7,8 @@
 #include "planner.h"
 #include "sql_error.h"
 #include "storage/btree.h"
+#include "storage/btree_store.h"
+#include "storage/index_key.h"
 #include "storage/file.h"
 #include "storage/row_codec.h"
 
@@ -138,6 +140,10 @@ QueryResult Database::runWrite(Statement& statement) {
             result = dropTable(*s);
         } else if (auto* s = std::get_if<InsertStmt>(&statement)) {
             result = insert(*s);
+        } else if (auto* s = std::get_if<CreateIndexStmt>(&statement)) {
+            result = createIndex(*s);
+        } else if (auto* s = std::get_if<DropIndexStmt>(&statement)) {
+            result = dropIndex(*s);
         } else if (auto* s = std::get_if<UpdateStmt>(&statement)) {
             result = update(*s);
         } else {
@@ -210,6 +216,7 @@ QueryResult Database::insert(InsertStmt& stmt) {
             checkType(schema.columns[col], row[col]);
         }
         checkRowSize(row);
+        table.checkIndexable(row);
         if (schema.primaryKey) {
             int64_t key = row[*schema.primaryKey].asInt();
             if (table.store->contains(key) || !batchKeys.insert(key).second) {
@@ -221,7 +228,7 @@ QueryResult Database::insert(InsertStmt& stmt) {
 
     for (Row& row : rows) {
         int64_t key = table.keyForNewRow(row);
-        table.store->insert(key, std::move(row));
+        table.insertRow(key, row);
     }
     return messageResult("INSERT " + std::to_string(rows.size()));
 }
@@ -281,6 +288,7 @@ QueryResult Database::update(UpdateStmt& stmt) {
             next.row[targets[i]] = std::move(value);
         }
         checkRowSize(next.row);
+        table.checkIndexable(next.row);
         next.key = table.keyForUpdatedRow(next.row, match.key);
         oldKeys.insert(match.key);
         if (!newKeys.insert(next.key).second) throw SqlError(duplicateKeyError(table, next.key));
@@ -295,13 +303,13 @@ QueryResult Database::update(UpdateStmt& stmt) {
 
     // Apply: remove rows whose key changes first, so keys can swap.
     for (size_t i = 0; i < updated.size(); ++i) {
-        if (updated[i].key != matches[i].key) table.store->erase(matches[i].key);
+        if (updated[i].key != matches[i].key) table.eraseRow(matches[i].key, matches[i].row);
     }
     for (size_t i = 0; i < updated.size(); ++i) {
         if (updated[i].key == matches[i].key) {
-            table.store->replace(updated[i].key, std::move(updated[i].row));
+            table.replaceRow(updated[i].key, matches[i].row, updated[i].row);
         } else {
-            table.store->insert(updated[i].key, std::move(updated[i].row));
+            table.insertRow(updated[i].key, updated[i].row);
         }
     }
     return messageResult("UPDATE " + std::to_string(updated.size()));
@@ -309,11 +317,51 @@ QueryResult Database::update(UpdateStmt& stmt) {
 
 QueryResult Database::remove(DeleteStmt& stmt) {
     Table& table = catalog_->getTable(stmt.table);
-    std::vector<int64_t> keys;
+    std::vector<Tuple> matches;
     OperatorPtr source = planRowSource(table, stmt.where.get());
-    for (Tuple tuple; source->next(tuple);) keys.push_back(tuple.key);
-    for (int64_t key : keys) table.store->erase(key);
-    return messageResult("DELETE " + std::to_string(keys.size()));
+    for (Tuple tuple; source->next(tuple);) matches.push_back(tuple);
+    source.reset();  // release the cursor's pinned page before writing
+    for (const Tuple& match : matches) table.eraseRow(match.key, match.row);
+    return messageResult("DELETE " + std::to_string(matches.size()));
+}
+
+std::string Database::checkIntegrity() {
+    try {
+        for (const std::string& name : catalog_->tableNames()) {
+            Table& table = catalog_->getTable(name);
+            static_cast<BTreeStore&>(*table.store).tree().check();
+            for (Index& index : table.indexes) {
+                index.tree->check();
+                if (index.tree->size() != table.store->size()) {
+                    return "index " + index.name + " has " + std::to_string(index.tree->size()) +
+                           " entries but " + name + " has " + std::to_string(table.store->size()) + " rows";
+                }
+                BTreeCursor cursor = index.tree->scan("", std::nullopt);
+                std::string entry, payload;
+                while (cursor.next(entry, payload)) {
+                    int64_t key = primaryKeyOfEntry(entry);
+                    std::optional<Row> row = table.store->get(key);
+                    if (!row) return "index " + index.name + " points to missing row " + std::to_string(key);
+                    if (encodeValueKey((*row)[index.column]) != entry.substr(0, entry.size() - 8)) {
+                        return "index " + index.name + " has a stale value for row " + std::to_string(key);
+                    }
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        return e.what();
+    }
+    return "";
+}
+
+QueryResult Database::createIndex(const CreateIndexStmt& stmt) {
+    catalog_->createIndex(stmt.index, stmt.table, stmt.column);
+    return messageResult("CREATE INDEX");
+}
+
+QueryResult Database::dropIndex(const DropIndexStmt& stmt) {
+    if (!catalog_->dropIndex(stmt.index)) throw SqlError("no such index: " + stmt.index);
+    return messageResult("DROP INDEX");
 }
 
 }  // namespace jerryql

@@ -138,7 +138,7 @@
   .table-item .count { font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
   .grid-area { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; }
   .grid-head { padding: 10px 12px; border-bottom: 1px solid var(--rule); display: grid; gap: 4px; min-width: 0; }
-  .schema { font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
+  .schema { font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; white-space: pre-line; }
   .grid-scroll { overflow: auto; max-height: 460px; }
   table.data { border-collapse: collapse; font-size: 0.85rem; width: max-content; min-width: 100%; }
   table.data th {
@@ -206,9 +206,14 @@
             <tr><td>Read 100 consecutive orders by <code>id</code></td><td class="plan">PK RANGE SCAN</td><td class="num" id="t-range">–</td></tr>
             <tr><td>Find orders by <code>amount</code> (no index)</td><td class="plan">SEQ SCAN</td><td class="num" id="t-scan">–</td></tr>
             <tr><td>Revenue per city over every order (<code>GROUP BY</code>)</td><td class="plan">AGGREGATE</td><td class="num" id="t-group">–</td></tr>
+            <tr id="index-row" hidden><td>Find orders by <code>amount</code>, now indexed</td><td class="plan">INDEX SCAN</td><td class="num" id="t-index">–</td></tr>
           </tbody>
         </table>
         <p class="ratio" id="timing-note">The B+tree index finds a row without reading the rest of the table. Load data to see the difference.</p>
+        <div class="row">
+          <button id="create-index" disabled>Create an index on amount</button>
+          <span class="hint" id="index-status">Builds a secondary B+tree index, then re-times the lookup by <code>amount</code>.</span>
+        </div>
       </div>
     </div>
   </section>
@@ -279,7 +284,7 @@ ORDER BY salary DESC;</textarea>
     </div>
     <div>
       <h3>Scope</h3>
-      <p>INT and TEXT columns, one INT primary key, transactions, <code>COUNT/SUM/MIN/MAX/AVG</code> with <code>GROUP BY</code> and <code>HAVING</code>. No NULLs or joins yet. Rows are limited to 1,000 bytes.</p>
+      <p>INT and TEXT columns, one INT primary key, secondary indexes, transactions, <code>COUNT/SUM/MIN/MAX/AVG</code> with <code>GROUP BY</code> and <code>HAVING</code>. No NULLs or joins yet. Rows are limited to 1,000 bytes.</p>
     </div>
   </section>
 </div>
@@ -308,6 +313,7 @@ ORDER BY salary DESC;</textarea>
     { label: "Group and count", sql: "SELECT dept, COUNT(*) AS people, SUM(salary) AS payroll, MAX(salary) AS top\nFROM employees\nGROUP BY dept\nORDER BY payroll DESC;" },
     { label: "Revenue by city", sql: "-- Load orders above first.\nSELECT city, COUNT(*) AS orders, SUM(amount) AS revenue, AVG(amount) AS average\nFROM orders\nGROUP BY city\nHAVING COUNT(*) > 100\nORDER BY revenue DESC;" },
     { label: "Query the orders", sql: "-- Load orders above first.\nEXPLAIN SELECT * FROM orders WHERE id >= 5000 AND id < 5010;\nSELECT * FROM orders WHERE id >= 5000 AND id < 5010;\nSELECT customer, amount FROM orders WHERE city = 'Tokyo' AND amount > 99990;" },
+    { label: "Add an index", sql: "CREATE INDEX employees_dept ON employees (dept);\nEXPLAIN SELECT name FROM employees WHERE dept = 'Infra';\nSELECT name FROM employees WHERE dept = 'Infra';" },
     { label: "Errors", sql: "INSERT INTO employees VALUES (1, 'Duplicate', 'X', 0);\nSELECT name FROM employees WHERE salary = 'lots';\nSELECT salary / 0 FROM employees;\nSELEC * FROM employees;" },
     { label: "Show schema", sql: ".schema" }
   ];
@@ -410,8 +416,10 @@ ORDER BY salary DESC;</textarea>
       item.type = "button";
       item.className = "table-item";
       item.setAttribute("aria-pressed", String(browser.table === table.name));
+      var indexCount = table.indexes.length;
       item.innerHTML = '<span class="name">' + escapeHtml(table.name) + '</span><span class="count">' +
-        formatCount(table.rows) + (table.rows === 1 ? " row" : " rows") + "</span>";
+        formatCount(table.rows) + (table.rows === 1 ? " row" : " rows") +
+        (indexCount ? " · " + indexCount + (indexCount === 1 ? " index" : " indexes") : "") + "</span>";
       item.addEventListener("click", function () { openTable(table.name, 0); });
       list.appendChild(item);
     });
@@ -447,7 +455,7 @@ ORDER BY salary DESC;</textarea>
     var result = queryJson(sql);
     var elapsed = performance.now() - started;
     $("grid-title").textContent = table.name;
-    $("grid-schema").textContent = table.sql;
+    $("grid-schema").textContent = [table.sql].concat(table.indexes).join(";\n");
     if (!result.ok) {
       $("grid-scroll").innerHTML = '<div class="empty msg-error">' + escapeHtml(result.error) + "</div>";
       return;
@@ -480,8 +488,11 @@ ORDER BY salary DESC;</textarea>
 
   // ---------- Scale test ----------
 
+  var ordersLoaded = 0, lastScanMs = 0;
+
   function setBusy(busy) {
     ["load-100k", "load-1m", "run", "reset"].forEach(function (id) { $(id).disabled = busy; });
+    $("create-index").disabled = busy || !ordersLoaded;
     $("csv-file").disabled = busy;
   }
 
@@ -508,6 +519,7 @@ ORDER BY salary DESC;</textarea>
     $("t-lookup").textContent = formatMs(lookup);
     $("t-range").textContent = formatMs(range);
     $("t-scan").textContent = formatMs(scan);
+    lastScanMs = scan;
     $("t-group").textContent = formatMs(group);
     $("timing-note").innerHTML = "On " + formatCount(rows) + " rows, finding an order by its indexed <code>id</code> was <b>" +
       formatCount(Math.round(scan / lookup)) + "× faster</b> than scanning for it by <code>amount</code>. Timings are averages from your browser, just now (500, 100, 3 and 1 runs).";
@@ -534,6 +546,9 @@ ORDER BY salary DESC;</textarea>
       $("load-status").textContent = "Loaded " + formatCount(total) + " rows in " + seconds.toFixed(1) + " s. Timing queries…";
       await nextFrame();
       runTimings(total);
+      ordersLoaded = total;
+      $("index-row").hidden = true;
+      $("index-status").textContent = "Builds a secondary B+tree index, then re-times the lookup by amount.";
       $("load-status").textContent = "Done. Browse the orders table below, or query it in the console.";
       openTable("orders", 0);
     } catch (e) {
@@ -542,6 +557,30 @@ ORDER BY salary DESC;</textarea>
     setBusy(false);
   }
 
+  async function createAmountIndex() {
+    setBusy(true);
+    $("index-status").textContent = "Building the index over " + formatCount(ordersLoaded) + " rows…";
+    await nextFrame();
+    try {
+      var started = performance.now();
+      check(queryJson("CREATE INDEX orders_amount ON orders (amount)"));
+      var buildSeconds = (performance.now() - started) / 1000;
+      var indexed = timeQuery(function () { return "SELECT * FROM orders WHERE amount = " + randomInt(100000); }, 200);
+      var plan = queryJson("EXPLAIN SELECT * FROM orders WHERE amount = 4242").rows.slice(-1)[0][0].trim();
+      $("t-index").textContent = formatMs(indexed);
+      $("index-row").hidden = false;
+      $("index-status").innerHTML = "Built in " + buildSeconds.toFixed(2) + " s. The planner now uses <code>" +
+        escapeHtml(plan.replace(/^-> /, "")) + "</code>: <b>" + formatCount(Math.round(lastScanMs / indexed)) +
+        "× faster</b> than the full scan.";
+      refreshTables();
+    } catch (e) {
+      $("index-status").innerHTML = '<span class="msg-error">' + escapeHtml(e.message) + "</span>";
+    }
+    setBusy(false);
+    $("create-index").disabled = true;  // the index now exists
+  }
+
+  $("create-index").addEventListener("click", createAmountIndex);
   $("load-100k").addEventListener("click", function () { loadOrders(100000); });
   $("load-1m").addEventListener("click", function () { loadOrders(1000000); });
 
@@ -665,6 +704,9 @@ ORDER BY salary DESC;</textarea>
     appendOutput("-- Data reset: only the employees table remains.\n\n");
     ["stat-rows", "stat-size", "stat-time", "stat-rate", "t-lookup", "t-range", "t-scan", "t-group"].forEach(function (id) { $(id).textContent = "–"; });
     $("progress-bar").style.width = "0%";
+    ordersLoaded = 0;
+    $("index-row").hidden = true;
+    $("create-index").disabled = true;
     browser.table = null;
     showGridMessage("Pick a table on the left.");
     refreshTables();

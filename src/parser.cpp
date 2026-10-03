@@ -24,8 +24,8 @@ std::string toLower(std::string s) {
 bool isReservedWord(const std::string& word) {
     static const std::set<std::string> reserved = {
         "AND",    "AS",      "ASC",   "BEGIN",   "BY",     "COMMIT", "CREATE", "DELETE", "DESC",  "DROP",
-        "EXPLAIN", "FROM",   "GROUP",  "HAVING",   "INSERT", "INT",    "INTEGER", "INTO",  "KEY",   "LIMIT",
-        "NOT",    "OFFSET",  "OR",      "ORDER", "PRIMARY", "ROLLBACK", "SELECT", "SET",    "TABLE", "TEXT",
+        "EXPLAIN", "FROM",   "GROUP",  "HAVING", "INDEX",   "INSERT", "INT",    "INTEGER", "INTO",  "KEY",   "LIMIT",
+        "NOT",    "OFFSET",  "ON",     "OR",      "ORDER", "PRIMARY", "ROLLBACK", "SELECT", "SET",    "TABLE", "TEXT",
         "TRANSACTION",
         "UPDATE", "VALUES",  "WHERE"};
     return reserved.count(toUpper(word)) > 0;
@@ -156,7 +156,9 @@ std::string Parser::sourceUpTo(size_t end) const {
 }
 
 Statement Parser::parseStatement() {
+    if (isKeyword("CREATE") && isKeyword("INDEX", 1)) return parseCreateIndex();
     if (isKeyword("CREATE")) return parseCreateTable();
+    if (isKeyword("DROP") && isKeyword("INDEX", 1)) return parseDropIndex();
     if (isKeyword("DROP")) return parseDropTable();
     if (isKeyword("INSERT")) return parseInsert();
     if (isKeyword("SELECT") || isKeyword("EXPLAIN")) return parseSelect();
@@ -208,6 +210,26 @@ ColumnDef Parser::parseColumnDef() {
         def.primaryKey = true;
     }
     return def;
+}
+
+CreateIndexStmt Parser::parseCreateIndex() {
+    expectKeyword("CREATE");
+    expectKeyword("INDEX");
+    CreateIndexStmt stmt;
+    stmt.index = expectName("index name");
+    expectKeyword("ON");
+    stmt.table = expectName("table name");
+    expectSymbol("(");
+    stmt.column = expectName("column name");
+    if (isSymbol(",")) fail("')' (indexes cover one column)");
+    expectSymbol(")");
+    return stmt;
+}
+
+DropIndexStmt Parser::parseDropIndex() {
+    expectKeyword("DROP");
+    expectKeyword("INDEX");
+    return DropIndexStmt{expectName("index name")};
 }
 
 DropTableStmt Parser::parseDropTable() {

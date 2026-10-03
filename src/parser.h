@@ -56,6 +56,8 @@ private:
     CreateTableStmt parseCreateTable();
     ColumnDef parseColumnDef();
     DropTableStmt parseDropTable();
+    CreateIndexStmt parseCreateIndex();
+    DropIndexStmt parseDropIndex();
     InsertStmt parseInsert();
     std::vector<ExprPtr> parseValuesTuple();
     SelectStmt parseSelect();

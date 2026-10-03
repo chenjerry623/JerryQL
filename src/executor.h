@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "ast.h"
+#include "storage/btree.h"
 #include "table_store.h"
 
 namespace jerryql {
@@ -36,6 +37,21 @@ public:
 
 private:
     std::unique_ptr<Cursor> cursor_;
+    std::string description_;
+};
+
+// Walks a secondary index's entries in [lo, hi] and fetches each matching
+// row from the table by its primary key.
+class IndexScanOperator : public Operator {
+public:
+    IndexScanOperator(const TableStore& store, BTree& index, std::string lo,
+                      std::optional<std::string> hi, std::string description);
+    bool next(Tuple& out) override;
+    std::string describe() const override { return description_; }
+
+private:
+    const TableStore& store_;
+    BTreeCursor cursor_;
     std::string description_;
 };
 

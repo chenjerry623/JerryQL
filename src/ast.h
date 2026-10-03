@@ -67,6 +67,16 @@ struct DropTableStmt {
     std::string table;
 };
 
+struct CreateIndexStmt {
+    std::string index;
+    std::string table;
+    std::string column;
+};
+
+struct DropIndexStmt {
+    std::string index;
+};
+
 struct InsertStmt {
     std::string table;
     std::vector<std::string> columns;         // empty = all columns in table order
@@ -113,6 +123,7 @@ struct TransactionStmt {
 };
 
 using Statement = std::variant<CreateTableStmt, DropTableStmt, InsertStmt, SelectStmt,
-                               UpdateStmt, DeleteStmt, TransactionStmt>;
+                               UpdateStmt, DeleteStmt, TransactionStmt, CreateIndexStmt,
+                               DropIndexStmt>;
 
 }  // namespace jerryql

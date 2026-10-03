@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <map>
+#include <stdexcept>
 
 #include "expr_eval.h"
+#include "storage/index_key.h"
 #include "sql_error.h"
 
 namespace jerryql {
@@ -15,6 +17,22 @@ ScanOperator::ScanOperator(const TableStore& store, KeyRange range, std::string 
 
 bool ScanOperator::next(Tuple& out) {
     return cursor_->next(out.key, out.row);
+}
+
+// ---------- Index scan ----------
+
+IndexScanOperator::IndexScanOperator(const TableStore& store, BTree& index, std::string lo,
+                                     std::optional<std::string> hi, std::string description)
+    : store_(store), cursor_(index.scan(lo, std::move(hi))), description_(std::move(description)) {}
+
+bool IndexScanOperator::next(Tuple& out) {
+    std::string_view entry, payload;
+    if (!cursor_.nextRaw(entry, payload)) return false;
+    out.key = primaryKeyOfEntry(entry);
+    std::optional<Row> row = store_.get(out.key);
+    if (!row) throw std::logic_error("index entry points to a missing row");
+    out.row = std::move(*row);
+    return true;
 }
 
 // ---------- Filter ----------

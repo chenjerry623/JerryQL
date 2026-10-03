@@ -39,9 +39,11 @@ const char* const kHelpText =
     "  UPDATE t SET col = expr, ... [WHERE ...]\n"
     "  DELETE FROM t [WHERE ...]\n"
     "  BEGIN / COMMIT / ROLLBACK  group statements into one transaction\n"
+    "  CREATE INDEX name ON t (column) / DROP INDEX name\n"
     "Expressions: + - * /  = <> < <= > >=  AND OR NOT  'text'  123\n"
     "Shell commands:\n"
     "  .tables          list tables\n"
+    "  .check           verify every B+tree and index\n"
     "  .schema [table]  show CREATE TABLE statements\n"
     "  .help            this message\n";
 
@@ -116,13 +118,20 @@ bool runDotCommand(Database& db, const std::string& line, std::ostream& out) {
 
     if (command == ".help") {
         out << kHelpText;
+    } else if (command == ".check") {
+        std::string problem = db.checkIntegrity();
+        out << (problem.empty() ? "ok: every table and index is consistent\n" : "Error: " + problem + "\n");
     } else if (command == ".tables") {
         for (const std::string& name : db.tableNames()) out << name << "\n";
     } else if (command == ".schema") {
         try {
             std::vector<std::string> names =
                 argument.empty() ? db.tableNames() : std::vector<std::string>{argument};
-            for (const std::string& name : names) out << db.table(name).toCreateSql() << ";\n";
+            for (const std::string& name : names) {
+                const Table& table = db.table(name);
+                out << table.toCreateSql() << ";\n";
+                for (const Index& index : table.indexes) out << table.indexSql(index) << ";\n";
+            }
         } catch (const SqlError& e) {
             out << "Error: " << e.what() << "\n";
         }
