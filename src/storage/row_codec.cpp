@@ -23,32 +23,39 @@ std::string encodeRow(const Row& row) {
     return out;
 }
 
-Row decodeRow(const std::string& bytes) {
-    Row row;
-    size_t pos = 0;
+void decodeRowInto(const char* bytes, size_t length, Row& row) {
+    size_t pos = 0, column = 0;
     auto need = [&](size_t n) {
-        if (pos + n > bytes.size()) throw std::runtime_error("corrupt row encoding");
+        if (pos + n > length) throw std::runtime_error("corrupt row encoding");
     };
-    while (pos < bytes.size()) {
+    while (pos < length) {
+        if (column == row.size()) row.emplace_back();
+        Value& value = row[column++];
         char tag = bytes[pos++];
         if (tag == 'I') {
             need(8);
             int64_t v;
-            std::memcpy(&v, bytes.data() + pos, 8);
+            std::memcpy(&v, bytes + pos, 8);
             pos += 8;
-            row.push_back(Value::integer(v));
+            value.assignInt(v);
         } else if (tag == 'T') {
             need(4);
-            uint32_t length;
-            std::memcpy(&length, bytes.data() + pos, 4);
+            uint32_t textLength;
+            std::memcpy(&textLength, bytes + pos, 4);
             pos += 4;
-            need(length);
-            row.push_back(Value::text(bytes.substr(pos, length)));
-            pos += length;
+            need(textLength);
+            value.assignText(bytes + pos, textLength);
+            pos += textLength;
         } else {
             throw std::runtime_error("corrupt row encoding");
         }
     }
+    row.resize(column);
+}
+
+Row decodeRow(const std::string& bytes) {
+    Row row;
+    decodeRowInto(bytes.data(), bytes.size(), row);
     return row;
 }
 

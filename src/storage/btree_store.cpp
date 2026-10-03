@@ -11,14 +11,15 @@ public:
     explicit BTreeRowCursor(BTreeCursor cursor) : cursor_(std::move(cursor)) {}
 
     bool next(int64_t& key, Row& row) override {
-        if (!cursor_.next(key, payload_)) return false;
-        row = decodeRow(payload_);
+        const char* payload;
+        size_t length;
+        if (!cursor_.nextRaw(key, payload, length)) return false;
+        decodeRowInto(payload, length, row);
         return true;
     }
 
 private:
     BTreeCursor cursor_;
-    std::string payload_;
 };
 
 }  // namespace

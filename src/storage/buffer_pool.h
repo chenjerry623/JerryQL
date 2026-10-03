@@ -58,6 +58,7 @@ public:
     PageRef& operator=(const PageRef&) = delete;
     ~PageRef() { release(); }
 
+    bool valid() const { return pool_ != nullptr; }
     PageId id() const;
     const char* data() const;
     char* mutableData();

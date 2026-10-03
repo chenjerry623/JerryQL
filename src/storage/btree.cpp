@@ -185,25 +185,35 @@ size_t leafSplitPoint(const LeafNode& leaf, size_t insertedAt) {
 BTreeCursor::BTreeCursor(Pager& pager, PageId leaf, uint16_t slot, int64_t hi)
     : pager_(pager), leaf_(leaf), slot_(slot), hi_(hi) {}
 
-bool BTreeCursor::next(int64_t& key, std::string& payload) {
+bool BTreeCursor::nextRaw(int64_t& key, const char*& payload, size_t& length) {
     while (leaf_ != 0) {
-        PageRef page = pager_.fetch(leaf_);
-        const char* p = page.data();
+        if (!page_.valid()) page_ = pager_.fetch(leaf_);
+        const char* p = page_.data();
         if (slot_ < cellCount(p)) {
-            int64_t k = leafKey(p, slot_);
-            if (k > hi_) {
-                leaf_ = 0;
-                return false;
-            }
+            const char* cell = p + leafCellOffset(p, slot_);
+            int64_t k = load<int64_t>(cell);
+            if (k > hi_) break;
             key = k;
-            payload = leafPayload(p, slot_);
+            length = load<uint16_t>(cell + 8);
+            payload = cell + kCellOverhead;
             ++slot_;
             return true;
         }
         leaf_ = nextLeaf(p);  // empty or finished leaf: move right
         slot_ = 0;
+        page_ = PageRef();
     }
+    leaf_ = 0;
+    page_ = PageRef();
     return false;
+}
+
+bool BTreeCursor::next(int64_t& key, std::string& payload) {
+    const char* data;
+    size_t length;
+    if (!nextRaw(key, data, length)) return false;
+    payload.assign(data, length);
+    return true;
 }
 
 // ---------- BTree ----------

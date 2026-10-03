@@ -13,18 +13,23 @@ namespace jerryql {
 // halves of a split always fit. Larger rows would need overflow pages.
 constexpr size_t kMaxPayload = 1000;
 
-// Iterates cells in key order across the linked list of leaves. Holds no
-// page pins between calls; any write to the tree invalidates it.
+// Iterates cells in key order across the linked list of leaves. Keeps the
+// current leaf pinned between calls (one hash lookup per leaf, not per row)
+// and releases it when exhausted. Any write to the tree invalidates it.
 class BTreeCursor {
 public:
     BTreeCursor(Pager& pager, PageId leaf, uint16_t slot, int64_t hi);
     bool next(int64_t& key, std::string& payload);
+    // Zero-copy variant: `payload` points into the pinned page and stays
+    // valid until the next call.
+    bool nextRaw(int64_t& key, const char*& payload, size_t& length);
 
 private:
     Pager& pager_;
     PageId leaf_;  // 0 when exhausted
     uint16_t slot_;
     int64_t hi_;
+    PageRef page_;  // pinned copy of leaf_, fetched lazily
 };
 
 struct BTreeShape {
