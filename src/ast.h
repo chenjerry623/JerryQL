@@ -81,6 +81,7 @@ struct SelectStmt {
     ExprPtr where;                  // may be null
     std::vector<OrderItem> orderBy;
     std::optional<int64_t> limit;
+    int64_t offset = 0;             // rows to skip before LIMIT applies
 };
 
 struct UpdateStmt {

@@ -82,10 +82,13 @@ std::string SortOperator::describe() const {
 
 // ---------- Limit ----------
 
-LimitOperator::LimitOperator(OperatorPtr child, int64_t limit)
-    : child_(std::move(child)), limit_(limit) {}
+LimitOperator::LimitOperator(OperatorPtr child, int64_t limit, int64_t offset)
+    : child_(std::move(child)), limit_(limit), offset_(offset) {}
 
 bool LimitOperator::next(Tuple& out) {
+    for (; offset_ > 0; --offset_) {
+        if (!child_->next(out)) return false;
+    }
     if (produced_ >= limit_) return false;
     if (!child_->next(out)) return false;
     ++produced_;
@@ -93,7 +96,7 @@ bool LimitOperator::next(Tuple& out) {
 }
 
 std::string LimitOperator::describe() const {
-    return "LIMIT " + std::to_string(limit_);
+    return "LIMIT " + std::to_string(limit_) + (offset_ > 0 ? " OFFSET " + std::to_string(offset_) : "");
 }
 
 // ---------- Projection ----------

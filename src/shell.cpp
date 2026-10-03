@@ -34,7 +34,7 @@ const char* const kHelpText =
     "  CREATE TABLE t (id INT PRIMARY KEY, name TEXT, ...)\n"
     "  DROP TABLE t\n"
     "  INSERT INTO t [(col, ...)] VALUES (...), (...)\n"
-    "  SELECT * | expr [AS name], ... FROM t [WHERE ...] [ORDER BY expr [DESC], ...] [LIMIT n]\n"
+    "  SELECT * | expr [AS name], ... FROM t [WHERE ...] [ORDER BY expr [DESC], ...] [LIMIT n [OFFSET m]]\n"
     "  EXPLAIN SELECT ...      show the query plan\n"
     "  UPDATE t SET col = expr, ... [WHERE ...]\n"
     "  DELETE FROM t [WHERE ...]\n"

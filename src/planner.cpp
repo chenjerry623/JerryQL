@@ -124,7 +124,9 @@ OperatorPtr planSelect(SelectStmt& stmt, const Table& table) {
         for (const OrderItem& item : stmt.orderBy) keys.push_back({item.expr.get(), item.descending});
         plan = std::make_unique<SortOperator>(std::move(plan), std::move(keys));
     }
-    if (stmt.limit) plan = std::make_unique<LimitOperator>(std::move(plan), *stmt.limit);
+    if (stmt.limit) {
+        plan = std::make_unique<LimitOperator>(std::move(plan), *stmt.limit, stmt.offset);
+    }
     if (!stmt.items.empty()) {
         std::vector<const Expr*> exprs;
         for (const SelectItem& item : stmt.items) exprs.push_back(item.expr.get());

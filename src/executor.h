@@ -75,10 +75,10 @@ private:
     bool materialized_ = false;
 };
 
-// Stops after a fixed number of tuples.
+// Skips `offset` tuples, then stops after `limit` more.
 class LimitOperator : public Operator {
 public:
-    LimitOperator(OperatorPtr child, int64_t limit);
+    LimitOperator(OperatorPtr child, int64_t limit, int64_t offset = 0);
     bool next(Tuple& out) override;
     std::string describe() const override;
     const Operator* child() const override { return child_.get(); }
@@ -86,6 +86,7 @@ public:
 private:
     OperatorPtr child_;
     int64_t limit_;
+    int64_t offset_;
     int64_t produced_ = 0;
 };
 

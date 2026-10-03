@@ -5,7 +5,11 @@ recursive-descent parser, a rule-based planner and a pull-based ("Volcano")
 executor, over a storage interface that an on-disk B+tree will implement next.
 
 **[Try it in your browser →](https://chenjerry623.github.io/JerryQL/)** The engine is
-compiled to WebAssembly and runs in the page, with no server.
+compiled to WebAssembly and runs in the page, with no server. You can:
+- load 100,000 or 1,000,000 rows and watch indexed lookups beat full scans, with live timings
+- browse every table page by page
+- import your own CSV file
+- run any SQL in the console
 
 This is a learning and portfolio project. It covers well-known ground (see
 [References](#references)), and doesn't claim anything new.

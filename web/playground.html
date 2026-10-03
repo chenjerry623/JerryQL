@@ -3,7 +3,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500&display=swap">
 <style>
-  /* Layout: a two-pane console (query editor | result log) under a compact masthead; stacks on phones. */
+  /* Layout: masthead, then a scale-test strip, the SQL console (editor | log), and a table browser (table list | data grid). Stacks on phones. */
   :root {
     --ground: #eef1f5;        /* page */
     --sheet: #ffffff;         /* panes */
@@ -14,7 +14,9 @@
     --accent-ink: #ffffff;
     --plan: #8a5a00;          /* amber: query plan lines */
     --error: #b42318;
+    --good: #1d7a4d;
     --chip: #e3e8f0;
+    --track: #dde3ec;
     --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
     --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
@@ -22,13 +24,15 @@
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --ground: #0f141c; --sheet: #161d28; --ink: #e4e9f1; --muted: #98a3b5; --rule: #2a3444;
-      --accent: #7ea2ff; --accent-ink: #0f141c; --plan: #f0b54a; --error: #ff8a7a; --chip: #212a38;
+      --accent: #7ea2ff; --accent-ink: #0f141c; --plan: #f0b54a; --error: #ff8a7a; --good: #5fd39a;
+      --chip: #212a38; --track: #263041;
       color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
     --ground: #0f141c; --sheet: #161d28; --ink: #e4e9f1; --muted: #98a3b5; --rule: #2a3444;
-    --accent: #7ea2ff; --accent-ink: #0f141c; --plan: #f0b54a; --error: #ff8a7a; --chip: #212a38;
+    --accent: #7ea2ff; --accent-ink: #0f141c; --plan: #f0b54a; --error: #ff8a7a; --good: #5fd39a;
+    --chip: #212a38; --track: #263041;
     color-scheme: dark;
   }
 
@@ -37,7 +41,7 @@
     background: var(--ground); color: var(--ink); font-family: var(--font-body);
     font-size: 15px; line-height: 1.5; margin: 0;
   }
-  .wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 32px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 40px; display: grid; gap: 18px; }
 
   header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; }
   h1 {
@@ -46,15 +50,11 @@
   }
   h1 small { font-family: var(--font-mono); font-size: 0.8rem; font-weight: 500; color: var(--muted); margin-left: 10px; letter-spacing: 0; }
   @media (max-width: 520px) { h1 small { display: block; margin-left: 0; } }
-  .lede { margin: 6px 0 0; color: var(--muted); max-width: 68ch; }
+  h2 { font-family: var(--font-display); font-weight: 600; font-size: 1.15rem; margin: 0; }
+  .lede { margin: 6px 0 0; color: var(--muted); max-width: 70ch; }
   .links { display: flex; gap: 16px; font-size: 0.9rem; }
   a { color: var(--accent); text-underline-offset: 3px; }
-
-  .console {
-    margin-top: 18px; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-    gap: 16px; align-items: stretch;
-  }
-  @media (max-width: 860px) { .console { grid-template-columns: minmax(0, 1fr); } }
+  code { font-family: var(--font-mono); font-size: 0.85em; }
 
   .pane {
     background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px;
@@ -64,31 +64,57 @@
     display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
     padding: 10px 12px; border-bottom: 1px solid var(--rule);
   }
+  .pane-body { padding: 14px 14px; display: grid; gap: 12px; min-width: 0; }
   .label {
     font-family: var(--font-display); font-weight: 600; font-size: 0.78rem; letter-spacing: 0.08em;
     text-transform: uppercase; color: var(--muted);
   }
+  .hint { font-size: 0.8rem; color: var(--muted); }
+  kbd { font-family: var(--font-mono); font-size: 0.75rem; border: 1px solid var(--rule); border-radius: 3px; padding: 0 4px; }
+
+  button, .file-button {
+    font: 500 0.88rem var(--font-body); border-radius: 4px; padding: 6px 12px; cursor: pointer;
+    border: 1px solid var(--rule); background: var(--sheet); color: var(--ink); display: inline-block;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  button:hover, .file-button:hover { border-color: var(--accent); }
+  button:focus-visible, .file-button:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  .file-button input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+  /* ----- Scale test ----- */
+  .scale-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 18px; }
+  @media (max-width: 860px) { .scale-grid { grid-template-columns: minmax(0, 1fr); } }
+  .progress { height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; }
+  .progress > div { height: 100%; width: 0%; background: var(--accent); transition: width 120ms linear; }
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 520px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .stat { display: grid; gap: 2px; }
+  .stat b { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 0.78rem; color: var(--muted); }
+  .timings { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  .timings th { text-align: left; font-weight: 500; color: var(--muted); font-size: 0.78rem; padding: 4px 8px 6px 0; border-bottom: 1px solid var(--rule); }
+  .timings td { padding: 7px 8px 7px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  .timings td.num { font-family: var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .timings td.plan { font-family: var(--font-mono); font-size: 0.78rem; color: var(--plan); }
+  .ratio { font-size: 0.9rem; }
+  .ratio b { color: var(--good); font-family: var(--font-mono); }
+  .msg-error { color: var(--error); font-size: 0.88rem; }
+
+  /* ----- Console ----- */
+  .console { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; }
+  @media (max-width: 860px) { .console { grid-template-columns: minmax(0, 1fr); } }
   textarea {
-    flex: 1; min-height: 260px; width: 100%; resize: vertical; border: 0; outline: none;
+    flex: 1; min-height: 240px; width: 100%; resize: vertical; border: 0; outline: none;
     padding: 12px; background: transparent; color: var(--ink);
     font-family: var(--font-mono); font-size: 0.88rem; line-height: 1.55; tab-size: 2;
   }
   textarea:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
   .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; border-top: 1px solid var(--rule); }
-  .hint { font-size: 0.8rem; color: var(--muted); margin-left: auto; }
-  kbd { font-family: var(--font-mono); font-size: 0.75rem; border: 1px solid var(--rule); border-radius: 3px; padding: 0 4px; }
-
-  button {
-    font: 500 0.88rem var(--font-body); border-radius: 4px; padding: 6px 12px; cursor: pointer;
-    border: 1px solid var(--rule); background: var(--sheet); color: var(--ink);
-  }
-  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-  button:hover { border-color: var(--accent); }
-  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  button:disabled { opacity: 0.5; cursor: wait; }
-
+  .actions .hint { margin-left: auto; }
   .output {
-    flex: 1; margin: 0; padding: 12px; min-height: 260px; max-height: 70vh; overflow: auto;
+    flex: 1; margin: 0; padding: 12px; min-height: 240px; max-height: 60vh; overflow: auto;
     font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.5; white-space: pre;
     font-variant-numeric: tabular-nums;
   }
@@ -96,35 +122,98 @@
   .output .err { color: var(--error); }
   .output .plan { color: var(--plan); }
   .output .meta { color: var(--muted); }
-
-  .examples { margin-top: 20px; }
-  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip { background: var(--chip); border-color: transparent; font-size: 0.85rem; }
 
+  /* ----- Table browser ----- */
+  .browser { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 320px; }
+  @media (max-width: 760px) { .browser { grid-template-columns: minmax(0, 1fr); } }
+  .table-list { border-right: 1px solid var(--rule); padding: 8px; display: grid; gap: 4px; align-content: start; }
+  @media (max-width: 760px) { .table-list { border-right: 0; border-bottom: 1px solid var(--rule); } }
+  .table-item {
+    text-align: left; border: 1px solid transparent; background: transparent; display: grid; gap: 1px; padding: 8px 10px;
+  }
+  .table-item[aria-pressed="true"] { background: var(--chip); border-color: var(--rule); }
+  .table-item .name { font-family: var(--font-mono); font-weight: 600; }
+  .table-item .count { font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .grid-area { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; }
+  .grid-head { padding: 10px 12px; border-bottom: 1px solid var(--rule); display: grid; gap: 4px; min-width: 0; }
+  .schema { font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
+  .grid-scroll { overflow: auto; max-height: 460px; }
+  table.data { border-collapse: collapse; font-size: 0.85rem; width: max-content; min-width: 100%; }
+  table.data th {
+    position: sticky; top: 0; background: var(--sheet); text-align: left; font-family: var(--font-mono);
+    font-weight: 600; font-size: 0.8rem; padding: 6px 12px; border-bottom: 1px solid var(--rule);
+  }
+  table.data td { padding: 5px 12px; border-bottom: 1px solid var(--rule); font-variant-numeric: tabular-nums; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+  table.data td.num { text-align: right; font-family: var(--font-mono); }
+  .pager { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; border-top: 1px solid var(--rule); }
+  .pager .hint { margin-right: auto; font-variant-numeric: tabular-nums; }
+  .empty { padding: 24px 14px; color: var(--muted); }
+
   .notes {
-    margin-top: 24px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 28px;
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 28px;
     border-top: 1px solid var(--rule); padding-top: 16px; font-size: 0.9rem; color: var(--muted);
   }
   @media (max-width: 760px) { .notes { grid-template-columns: minmax(0, 1fr); } }
-  .notes h2 { font-family: var(--font-display); font-weight: 600; font-size: 0.95rem; color: var(--ink); margin: 0 0 4px; }
+  .notes h3 { font-family: var(--font-display); font-weight: 600; font-size: 0.95rem; color: var(--ink); margin: 0 0 4px; }
   .notes p { margin: 0; }
-  .pipeline { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink); }
 
-  @media (prefers-reduced-motion: no-preference) { button { transition: border-color 120ms; } }
+  @media (prefers-reduced-motion: reduce) { .progress > div { transition: none; } }
 </style>
 
 <div class="wrap">
   <header>
     <div>
       <h1>JerryQL <small>SQL engine · C++17 → WebAssembly</small></h1>
-      <p class="lede">A SQL database engine written from scratch in C++, compiled to WebAssembly and running in this tab. Edit the query and press Run. Nothing is sent to a server.</p>
+      <p class="lede">A SQL database engine written from scratch in C++: parser, query planner, B+tree storage, buffer pool and write-ahead log. Compiled to WebAssembly, it runs entirely in this tab; nothing is sent to a server.</p>
     </div>
     <nav class="links">
-      <a href="https://github.com/chenjerry623/JerryQL" target="_blank" rel="noopener">Source on GitHub</a>
+      <a href="https://github.com/chenjerry623/JerryQL" target="_blank" rel="noopener">Source and benchmarks on GitHub</a>
     </nav>
   </header>
 
-  <section class="console">
+  <!-- Scale test -->
+  <section class="pane" aria-labelledby="scale-title">
+    <div class="pane-head">
+      <h2 id="scale-title">Try it at scale</h2>
+      <span class="hint">Rows go in through ordinary <code>INSERT</code> statements, 1,000 per statement.</span>
+    </div>
+    <div class="pane-body scale-grid">
+      <div class="pane-body" style="padding:0">
+        <div class="row">
+          <button class="primary" id="load-100k" disabled>Load 100,000 orders</button>
+          <button id="load-1m" disabled>Load 1,000,000 orders</button>
+        </div>
+        <div class="progress" aria-hidden="true"><div id="progress-bar"></div></div>
+        <div class="hint" id="load-status">Loads a sample <code>orders</code> table, then times three queries against it.</div>
+        <div class="stats">
+          <div class="stat"><b id="stat-rows">–</b><span>rows in orders</span></div>
+          <div class="stat"><b id="stat-size">–</b><span>database size</span></div>
+          <div class="stat"><b id="stat-time">–</b><span>load time</span></div>
+          <div class="stat"><b id="stat-rate">–</b><span>rows per second</span></div>
+        </div>
+        <div class="row">
+          <label class="file-button">Import a CSV file<input type="file" id="csv-file" accept=".csv,text/csv"></label>
+          <span class="hint" id="import-status">First row = column names. A numeric <code>id</code> column becomes the primary key.</span>
+        </div>
+      </div>
+      <div style="min-width:0">
+        <table class="timings" aria-describedby="timing-note">
+          <thead><tr><th>Query on orders</th><th>Plan the engine chose</th><th style="text-align:right">Average time</th></tr></thead>
+          <tbody id="timing-rows">
+            <tr><td>Find one order by <code>id</code></td><td class="plan">PK LOOKUP</td><td class="num" id="t-lookup">–</td></tr>
+            <tr><td>Read 100 consecutive orders by <code>id</code></td><td class="plan">PK RANGE SCAN</td><td class="num" id="t-range">–</td></tr>
+            <tr><td>Find orders by <code>amount</code> (no index)</td><td class="plan">SEQ SCAN</td><td class="num" id="t-scan">–</td></tr>
+          </tbody>
+        </table>
+        <p class="ratio" id="timing-note">The B+tree index finds a row without reading the rest of the table. Load data to see the difference.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Console -->
+  <section class="console" aria-label="SQL console">
     <div class="pane">
       <div class="pane-head">
         <span class="label">Query</span>
@@ -145,31 +234,51 @@ ORDER BY salary DESC;</textarea>
         <span class="hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> runs</span>
       </div>
     </div>
-
     <div class="pane">
-      <div class="pane-head"><span class="label">Output</span><span class="hint" id="tables"></span></div>
+      <div class="pane-head"><span class="label">Output</span></div>
       <pre class="output" id="output" aria-live="polite"></pre>
     </div>
   </section>
 
-  <section class="examples">
-    <span class="label">Try an example</span>
-    <div class="chips" id="chips"></div>
+  <div class="chips" id="chips" aria-label="Example queries"></div>
+
+  <!-- Table browser -->
+  <section class="pane" aria-labelledby="browser-title">
+    <div class="pane-head">
+      <h2 id="browser-title">Browse the data</h2>
+      <span class="hint">Every table in the database, read page by page with <code>LIMIT … OFFSET</code>.</span>
+    </div>
+    <div class="browser">
+      <div class="table-list" id="table-list"></div>
+      <div class="grid-area">
+        <div class="grid-head">
+          <span class="label" id="grid-title">No table selected</span>
+          <span class="schema" id="grid-schema"></span>
+        </div>
+        <div class="grid-scroll" id="grid-scroll"><div class="empty">Pick a table on the left.</div></div>
+        <div class="pager">
+          <span class="hint" id="page-info"></span>
+          <button id="page-first" disabled>First</button>
+          <button id="page-prev" disabled>Previous</button>
+          <button id="page-next" disabled>Next</button>
+          <button id="page-last" disabled>Last</button>
+        </div>
+      </div>
+    </div>
   </section>
 
   <section class="notes">
     <div>
-      <h2>How a query runs</h2>
-      <p class="pipeline">lexer → parser → AST → planner → operators</p>
-      <p>Hand-written recursive-descent parser. Pull-based (Volcano) operators: scan, filter, sort, limit, project.</p>
+      <h3>How a query runs</h3>
+      <p><code>lexer → parser → planner → operators → B+tree</code>. A hand-written recursive-descent parser feeds pull-based operators: scan, filter, sort, limit, project.</p>
     </div>
     <div>
-      <h2>What the planner does</h2>
-      <p>Conditions on the primary key become a B+tree point lookup or key-range scan instead of reading every row. <code>EXPLAIN</code> shows the plan it chose.</p>
+      <h3>What's running here</h3>
+      <p>The same C++ code as the native build: B+tree pages, a buffer pool and a write-ahead log, here over in-memory files. Reloading the page resets the data.</p>
     </div>
     <div>
-      <h2>Scope</h2>
-      <p>INT and TEXT columns, one INT primary key, transactions; no NULLs, joins or aggregates yet. Here the B+tree and write-ahead log run over in-memory files, so reloading the page resets the data.</p>
+      <h3>Scope</h3>
+      <p>INT and TEXT columns, one INT primary key, transactions. No NULLs, joins or aggregates yet. Rows are limited to 1,000 bytes.</p>
     </div>
   </section>
 </div>
@@ -194,23 +303,48 @@ ORDER BY salary DESC;</textarea>
     { label: "Sort and limit", sql: "SELECT name, dept, salary FROM employees\nORDER BY dept, salary DESC\nLIMIT 4;" },
     { label: "Raise for Infra", sql: "UPDATE employees SET salary = salary + 10000 WHERE dept = 'Infra';\nSELECT name, salary FROM employees WHERE dept = 'Infra';" },
     { label: "Shift every key", sql: "-- Rows are read before any are written, so moving keys is safe:\nUPDATE employees SET id = id + 100;\nSELECT id, name FROM employees;" },
-    { label: "New table", sql: "CREATE TABLE projects (id INT PRIMARY KEY, title TEXT, owner_id INT);\nINSERT INTO projects VALUES (1, 'Query planner', 1), (2, 'B+tree storage', 3);\nSELECT * FROM projects WHERE owner_id = 3;" },
     { label: "Rollback", sql: "BEGIN;\nDELETE FROM employees WHERE dept = 'Engineering';\nSELECT name, dept FROM employees;\nROLLBACK;\n-- The delete is undone:\nSELECT name, dept FROM employees;" },
+    { label: "Query the orders", sql: "-- Load orders above first.\nEXPLAIN SELECT * FROM orders WHERE id >= 5000 AND id < 5010;\nSELECT * FROM orders WHERE id >= 5000 AND id < 5010;\nSELECT customer, amount FROM orders WHERE city = 'Tokyo' AND amount > 99990;" },
     { label: "Errors", sql: "INSERT INTO employees VALUES (1, 'Duplicate', 'X', 0);\nSELECT name FROM employees WHERE salary = 'lots';\nSELECT salary / 0 FROM employees;\nSELEC * FROM employees;" },
     { label: "Show schema", sql: ".schema" }
   ];
 
-  var editor = document.getElementById("editor");
-  var output = document.getElementById("output");
-  var status = document.getElementById("status");
-  var tablesHint = document.getElementById("tables");
-  var runButton = document.getElementById("run");
-  var resetButton = document.getElementById("reset");
+  var RESERVED = ("AND AS ASC BEGIN BY COMMIT CREATE DELETE DESC DROP EXPLAIN FROM INSERT INT INTEGER INTO KEY " +
+    "LIMIT NOT OFFSET OR ORDER PRIMARY ROLLBACK SELECT SET TABLE TEXT TRANSACTION UPDATE VALUES WHERE").split(" ");
+  var PAGE_SIZE = 50;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var editor = $("editor"), output = $("output"), status = $("status");
   var engine = null;
+  var browser = { table: null, offset: 0, total: 0 };
+
+  // ---------- Engine calls ----------
+
+  function callText(fn, types, args) {
+    var ptr = engine.ccall(fn, "number", types || [], args || []);
+    var text = engine.UTF8ToString(ptr);
+    engine.ccall("jerryql_free", null, ["number"], [ptr]);
+    return text;
+  }
+  function runScript(sql) { return callText("jerryql_run", ["string"], [sql]); }
+  function queryJson(sql) { return JSON.parse(callText("jerryql_query_json", ["string"], [sql])); }
+  function tablesInfo() { return JSON.parse(callText("jerryql_tables_json")); }
+  function nextFrame() { return new Promise(function (resolve) { setTimeout(resolve, 0); }); }
+
+  // ---------- Formatting ----------
 
   function escapeHtml(text) {
-    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
+  function formatCount(n) { return Number(n).toLocaleString("en-US"); }
+  function formatMs(ms) {
+    if (ms < 1) return (ms * 1000).toFixed(0) + " µs";
+    if (ms < 100) return ms.toFixed(1) + " ms";
+    return ms.toFixed(0) + " ms";
+  }
+  function formatBytes(bytes) { return (bytes / 1e6).toFixed(1) + " MB"; }
+
+  // ---------- Console ----------
 
   function classForLine(line, inPlan) {
     if (line.indexOf("jerryql> ") === 0) return "prompt";
@@ -220,96 +354,323 @@ ORDER BY salary DESC;</textarea>
     return "";
   }
 
-  function renderLines(text) {
-    var html = "";
-    var inPlan = false;
+  function appendOutput(text) {
+    var html = "", inPlan = false;
     text.split("\n").forEach(function (line) {
       if (line.indexOf("jerryql> ") === 0) inPlan = /^jerryql> EXPLAIN/i.test(line);
       var cls = classForLine(line, inPlan);
       html += cls ? '<span class="' + cls + '">' + escapeHtml(line) + "</span>\n" : escapeHtml(line) + "\n";
     });
-    return html;
-  }
-
-  function appendOutput(text) {
-    output.insertAdjacentHTML("beforeend", renderLines(text));
+    output.insertAdjacentHTML("beforeend", html);
     output.scrollTop = output.scrollHeight;
-  }
-
-  function callEngine(sql) {
-    var ptr = engine.ccall("jerryql_run", "number", ["string"], [sql]);
-    var text = engine.UTF8ToString(ptr);
-    engine.ccall("jerryql_free", null, ["number"], [ptr]);
-    return text;
   }
 
   // Lines starting with "." are shell commands; everything else is SQL.
   function runInput(input) {
-    var sqlBuffer = [];
-    var result = "";
-    function flushSql() {
-      var sql = sqlBuffer.join("\n");
-      if (sql.trim()) result += callEngine(sql);
-      sqlBuffer = [];
+    var buffer = [], result = "";
+    function flush() {
+      var sql = buffer.join("\n");
+      if (sql.trim()) result += runScript(sql);
+      buffer = [];
     }
     input.split("\n").forEach(function (line) {
       if (/^\s*\./.test(line)) {
-        flushSql();
-        result += "jerryql> " + line.trim() + "\n" + callEngine(line) + "\n";
+        flush();
+        result += "jerryql> " + line.trim() + "\n" + runScript(line) + "\n";
       } else {
-        sqlBuffer.push(line);
+        buffer.push(line);
       }
     });
-    flushSql();
+    flush();
     return result;
-  }
-
-  function refreshTables() {
-    var names = callEngine(".tables").trim().split("\n").filter(Boolean);
-    tablesHint.textContent = names.length ? "Tables: " + names.join(", ") : "No tables";
   }
 
   function run() {
     if (!engine) return;
     var started = performance.now();
     appendOutput(runInput(editor.value));
-    var ms = performance.now() - started;
-    status.textContent = "Ran in " + (ms < 1 ? ms.toFixed(2) : ms.toFixed(1)) + " ms";
+    status.textContent = "Ran in " + formatMs(performance.now() - started);
     refreshTables();
   }
 
-  function resetData() {
-    engine.ccall("jerryql_reset", null, [], []);
-    callEngine(SEED_SQL);
-    output.textContent = "";
-    appendOutput("-- Data reset: employees table reloaded with 6 rows.\n\n");
+  // ---------- Table browser ----------
+
+  function refreshTables() {
+    var info = tablesInfo();
+    var list = $("table-list");
+    list.innerHTML = "";
+    if (!info.tables.length) {
+      list.innerHTML = '<div class="empty">No tables yet.</div>';
+    }
+    info.tables.forEach(function (table) {
+      var item = document.createElement("button");
+      item.type = "button";
+      item.className = "table-item";
+      item.setAttribute("aria-pressed", String(browser.table === table.name));
+      item.innerHTML = '<span class="name">' + escapeHtml(table.name) + '</span><span class="count">' +
+        formatCount(table.rows) + (table.rows === 1 ? " row" : " rows") + "</span>";
+      item.addEventListener("click", function () { openTable(table.name, 0); });
+      list.appendChild(item);
+    });
+    var current = info.tables.filter(function (t) { return t.name === browser.table; })[0];
+    if (browser.table && !current) {
+      browser.table = null;
+      showGridMessage("Pick a table on the left.");
+    } else if (current) {
+      browser.total = current.rows;
+      if (browser.offset >= browser.total) browser.offset = Math.max(0, Math.floor((browser.total - 1) / PAGE_SIZE) * PAGE_SIZE);
+      renderPage(current);
+    }
+    return info;
+  }
+
+  function showGridMessage(text) {
+    $("grid-title").textContent = "No table selected";
+    $("grid-schema").textContent = "";
+    $("grid-scroll").innerHTML = '<div class="empty">' + escapeHtml(text) + "</div>";
+    $("page-info").textContent = "";
+    ["page-first", "page-prev", "page-next", "page-last"].forEach(function (id) { $(id).disabled = true; });
+  }
+
+  function openTable(name, offset) {
+    browser.table = name;
+    browser.offset = offset;
     refreshTables();
   }
+
+  function renderPage(table) {
+    var sql = "SELECT * FROM " + table.name + " LIMIT " + PAGE_SIZE + " OFFSET " + browser.offset;
+    var started = performance.now();
+    var result = queryJson(sql);
+    var elapsed = performance.now() - started;
+    $("grid-title").textContent = table.name;
+    $("grid-schema").textContent = table.sql;
+    if (!result.ok) {
+      $("grid-scroll").innerHTML = '<div class="empty msg-error">' + escapeHtml(result.error) + "</div>";
+      return;
+    }
+    var html = '<table class="data"><thead><tr>';
+    result.columns.forEach(function (c) { html += "<th>" + escapeHtml(c) + "</th>"; });
+    html += "</tr></thead><tbody>";
+    result.rows.forEach(function (row) {
+      html += "<tr>";
+      row.forEach(function (v) {
+        html += typeof v === "number" ? '<td class="num">' + v + "</td>" : '<td title="' + escapeHtml(v) + '">' + escapeHtml(v) + "</td>";
+      });
+      html += "</tr>";
+    });
+    html += "</tbody></table>";
+    if (!result.rows.length) html = '<div class="empty">This table is empty.</div>';
+    $("grid-scroll").innerHTML = html;
+    var from = table.rows ? browser.offset + 1 : 0, to = browser.offset + result.rows.length;
+    $("page-info").textContent = "Rows " + formatCount(from) + "–" + formatCount(to) + " of " +
+      formatCount(table.rows) + " · read in " + (elapsed < 0.1 ? "under 0.1 ms" : formatMs(elapsed));
+    $("page-first").disabled = $("page-prev").disabled = browser.offset === 0;
+    $("page-next").disabled = $("page-last").disabled = to >= table.rows;
+  }
+
+  function lastPageOffset() { return Math.max(0, Math.floor((browser.total - 1) / PAGE_SIZE) * PAGE_SIZE); }
+  $("page-first").addEventListener("click", function () { openTable(browser.table, 0); });
+  $("page-prev").addEventListener("click", function () { openTable(browser.table, Math.max(0, browser.offset - PAGE_SIZE)); });
+  $("page-next").addEventListener("click", function () { openTable(browser.table, browser.offset + PAGE_SIZE); });
+  $("page-last").addEventListener("click", function () { openTable(browser.table, lastPageOffset()); });
+
+  // ---------- Scale test ----------
+
+  function setBusy(busy) {
+    ["load-100k", "load-1m", "run", "reset"].forEach(function (id) { $(id).disabled = busy; });
+    $("csv-file").disabled = busy;
+  }
+
+  // Browsers round performance.now() to ~0.1 ms, too coarse for a single
+  // indexed lookup, so each figure is the average over a batch of queries.
+  function timeQuery(makeSql, repeats) {
+    var queries = [];
+    for (var i = 0; i < repeats; i++) queries.push(makeSql());
+    var started = performance.now();
+    queries.forEach(function (sql) {
+      var result = queryJson(sql);
+      if (!result.ok) throw new Error(result.error);
+    });
+    return (performance.now() - started) / repeats;
+  }
+
+  function randomInt(max) { return Math.floor(Math.random() * max); }
+
+  function runTimings(rows) {
+    var lookup = timeQuery(function () { return "SELECT * FROM orders WHERE id = " + randomInt(rows); }, 500);
+    var range = timeQuery(function () { var lo = randomInt(rows - 100); return "SELECT * FROM orders WHERE id >= " + lo + " AND id < " + (lo + 100); }, 100);
+    var scan = timeQuery(function () { return "SELECT * FROM orders WHERE amount = " + randomInt(100000); }, 3);
+    $("t-lookup").textContent = formatMs(lookup);
+    $("t-range").textContent = formatMs(range);
+    $("t-scan").textContent = formatMs(scan);
+    $("timing-note").innerHTML = "On " + formatCount(rows) + " rows, finding an order by its indexed <code>id</code> was <b>" +
+      formatCount(Math.round(scan / lookup)) + "× faster</b> than scanning for it by <code>amount</code>. Timings are averages from your browser, just now (500, 100 and 3 runs).";
+  }
+
+  async function loadOrders(total) {
+    setBusy(true);
+    var chunk = 20000, started = performance.now();
+    try {
+      for (var first = 0; first < total; first += chunk) {
+        var count = Math.min(chunk, total - first);
+        var error = callText("jerryql_load_orders", ["number", "number"], [first, count]);
+        if (error) throw new Error(error);
+        $("progress-bar").style.width = ((first + count) / total * 100).toFixed(1) + "%";
+        $("load-status").textContent = "Inserted " + formatCount(first + count) + " of " + formatCount(total) + " rows…";
+        await nextFrame();
+      }
+      var seconds = (performance.now() - started) / 1000;
+      var info = tablesInfo();
+      $("stat-rows").textContent = formatCount(total);
+      $("stat-size").textContent = formatBytes(info.bytes);
+      $("stat-time").textContent = seconds.toFixed(1) + " s";
+      $("stat-rate").textContent = formatCount(Math.round(total / seconds));
+      $("load-status").textContent = "Loaded " + formatCount(total) + " rows in " + seconds.toFixed(1) + " s. Timing queries…";
+      await nextFrame();
+      runTimings(total);
+      $("load-status").textContent = "Done. Browse the orders table below, or query it in the console.";
+      openTable("orders", 0);
+    } catch (e) {
+      $("load-status").innerHTML = '<span class="msg-error">Load failed: ' + escapeHtml(e.message) + "</span>";
+    }
+    setBusy(false);
+  }
+
+  $("load-100k").addEventListener("click", function () { loadOrders(100000); });
+  $("load-1m").addEventListener("click", function () { loadOrders(1000000); });
+
+  // ---------- CSV import ----------
+
+  // RFC 4180-style parsing: quoted fields, doubled quotes, CRLF or LF.
+  function parseCsv(text) {
+    var rows = [], row = [], field = "", i = 0, quoted = false;
+    while (i < text.length) {
+      var c = text[i];
+      if (quoted) {
+        if (c === '"' && text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        if (c === '"') { quoted = false; i++; continue; }
+        field += c; i++; continue;
+      }
+      if (c === '"') { quoted = true; i++; continue; }
+      if (c === ",") { row.push(field); field = ""; i++; continue; }
+      if (c === "\r") { i++; continue; }
+      if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; i++; continue; }
+      field += c; i++;
+    }
+    if (field !== "" || row.length) { row.push(field); rows.push(row); }
+    return rows.filter(function (r) { return r.length > 1 || r[0] !== ""; });
+  }
+
+  function sqlName(raw, used) {
+    var name = String(raw).trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+    if (!name) name = "col";
+    if (/^[0-9]/.test(name)) name = "c_" + name;
+    if (RESERVED.indexOf(name.toUpperCase()) !== -1) name += "_";
+    var unique = name, n = 2;
+    while (used.indexOf(unique) !== -1) unique = name + "_" + n++;
+    used.push(unique);
+    return unique;
+  }
+
+  function isInteger(value) { return /^-?\d{1,15}$/.test(value); }
+  function sqlText(value) { return "'" + String(value).replace(/'/g, "''") + "'"; }
+
+  async function importCsv(file) {
+    var importStatus = $("import-status");
+    if (file.size > 50e6) { importStatus.innerHTML = '<span class="msg-error">Files up to 50 MB, please.</span>'; return; }
+    setBusy(true);
+    importStatus.textContent = "Reading " + file.name + "…";
+    try {
+      var rows = parseCsv(await file.text());
+      if (rows.length < 2) throw new Error("the file needs a header row and at least one data row");
+      var header = rows.shift(), width = header.length;
+      rows = rows.filter(function (r) { return r.length === width; });
+      var used = [], columns = header.map(function (h) { return sqlName(h, used); });
+      var types = columns.map(function (_, c) {
+        return rows.every(function (r) { return isInteger(r[c]); }) ? "INT" : "TEXT";
+      });
+      var keyColumn = columns.findIndex(function (name, c) {
+        if (name !== "id" || types[c] !== "INT") return false;
+        var seen = new Set();
+        return rows.every(function (r) { var k = r[c]; if (seen.has(k)) return false; seen.add(k); return true; });
+      });
+      var tableNames = tablesInfo().tables.map(function (t) { return t.name; });
+      var table = sqlName(file.name.replace(/\.[^.]*$/, ""), tableNames.slice());
+      var definition = columns.map(function (name, c) {
+        return name + " " + types[c] + (c === keyColumn ? " PRIMARY KEY" : "");
+      }).join(", ");
+
+      // One transaction: if any row fails, the whole import is rolled back.
+      var started = performance.now();
+      check(queryJson("BEGIN"));
+      try {
+        check(queryJson("CREATE TABLE " + table + " (" + definition + ")"));
+        for (var first = 0; first < rows.length; first += 500) {
+          var batch = rows.slice(first, first + 500).map(function (r) {
+            return "(" + r.map(function (v, c) { return types[c] === "INT" ? String(Number(v)) : sqlText(v); }).join(", ") + ")";
+          });
+          var result = queryJson("INSERT INTO " + table + " VALUES " + batch.join(", "));
+          if (!result.ok) throw new Error("rows " + (first + 1) + "–" + (first + batch.length) + ": " + result.error);
+          if (first % 10000 === 0) {
+            importStatus.textContent = "Imported " + formatCount(first + batch.length) + " of " + formatCount(rows.length) + " rows…";
+            await nextFrame();
+          }
+        }
+        check(queryJson("COMMIT"));
+      } catch (e) {
+        queryJson("ROLLBACK");
+        throw e;
+      }
+      var seconds = (performance.now() - started) / 1000;
+      importStatus.textContent = "Imported " + formatCount(rows.length) + " rows into " + table + " in " +
+        seconds.toFixed(2) + " s" + (keyColumn >= 0 ? " (id is the primary key)." : ".");
+      editor.value = "SELECT * FROM " + table + " LIMIT 20;";
+      openTable(table, 0);
+    } catch (e) {
+      importStatus.innerHTML = '<span class="msg-error">Import failed, nothing was saved: ' + escapeHtml(e.message) + "</span>";
+    }
+    setBusy(false);
+    $("csv-file").value = "";
+  }
+
+  function check(result) { if (!result.ok) throw new Error(result.error); return result; }
+
+  $("csv-file").addEventListener("change", function (event) {
+    var file = event.target.files && event.target.files[0];
+    if (file) importCsv(file);
+  });
+
+  // ---------- Wiring ----------
 
   EXAMPLES.forEach(function (example) {
     var chip = document.createElement("button");
     chip.className = "chip";
     chip.type = "button";
     chip.textContent = example.label;
-    chip.addEventListener("click", function () {
-      editor.value = example.sql;
-      run();
-    });
-    document.getElementById("chips").appendChild(chip);
+    chip.addEventListener("click", function () { editor.value = example.sql; run(); });
+    $("chips").appendChild(chip);
   });
 
-  runButton.addEventListener("click", run);
-  resetButton.addEventListener("click", resetData);
-  document.getElementById("clear").addEventListener("click", function () { output.textContent = ""; });
+  $("run").addEventListener("click", run);
+  $("reset").addEventListener("click", function () {
+    engine.ccall("jerryql_reset", null, [], []);
+    runScript(SEED_SQL);
+    output.textContent = "";
+    appendOutput("-- Data reset: only the employees table remains.\n\n");
+    ["stat-rows", "stat-size", "stat-time", "stat-rate", "t-lookup", "t-range", "t-scan"].forEach(function (id) { $(id).textContent = "–"; });
+    $("progress-bar").style.width = "0%";
+    browser.table = null;
+    showGridMessage("Pick a table on the left.");
+    refreshTables();
+  });
+  $("clear").addEventListener("click", function () { output.textContent = ""; });
   editor.addEventListener("keydown", function (event) {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      run();
-    }
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); run(); }
   });
 
-  // Before the engine loads, show the seed script so the page isn't empty.
   output.textContent = "-- Loading the engine (WebAssembly)…\n\n" + SEED_SQL + "\n";
+  showGridMessage("The engine is loading…");
 
   if (typeof createJerryQL !== "function") {
     status.textContent = "Engine failed to load";
@@ -319,12 +680,12 @@ ORDER BY salary DESC;</textarea>
 
   createJerryQL().then(function (module) {
     engine = module;
+    runScript(SEED_SQL);
     output.textContent = "";
-    callEngine(SEED_SQL);
-    appendOutput("-- Engine loaded. Sample table: employees (6 rows). Try the examples below.\n\n");
+    appendOutput("-- Engine loaded with a sample employees table. Try the examples below, or load orders above.\n\n");
     run();
-    runButton.disabled = false;
-    resetButton.disabled = false;
+    setBusy(false);
+    openTable("employees", 0);
   }).catch(function (error) {
     status.textContent = "Engine failed to load";
     appendOutput("Error: " + String(error && error.message || error) + "\n");

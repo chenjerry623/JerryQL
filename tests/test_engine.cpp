@@ -49,6 +49,10 @@ TEST(selectsWithFilterOrderAndLimit) {
     CHECK_EQ(rowsOf(db, "SELECT name FROM people WHERE name > 'B' AND name < 'D'"),
              std::string("Brian;Cleo"));
     CHECK_EQ(rowsOf(db, "SELECT id FROM people LIMIT 0"), std::string(""));
+    CHECK_EQ(rowsOf(db, "SELECT id FROM people LIMIT 2 OFFSET 1"), std::string("2;3"));
+    CHECK_EQ(rowsOf(db, "SELECT id FROM people LIMIT 5 OFFSET 3"), std::string("4"));
+    CHECK_EQ(rowsOf(db, "SELECT id FROM people LIMIT 5 OFFSET 10"), std::string(""));
+    CHECK_EQ(rowsOf(db, "SELECT name FROM people ORDER BY name DESC LIMIT 1 OFFSET 1"), std::string("Cleo"));
 }
 
 TEST(selectsExpressionsWithHeaders) {

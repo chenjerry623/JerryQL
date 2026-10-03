@@ -56,7 +56,8 @@ if(EMSCRIPTEN)
     -sEXPORT_NAME=createJerryQL
     -sENVIRONMENT=web,node
     -sALLOW_MEMORY_GROWTH=1
-    -sEXPORTED_FUNCTIONS=_jerryql_run,_jerryql_reset,_jerryql_free,_malloc,_free
+    -sEXPORTED_FUNCTIONS=_jerryql_run,_jerryql_query_json,_jerryql_tables_json,_jerryql_load_orders,_jerryql_reset,_jerryql_free,_malloc,_free
+    -sMAXIMUM_MEMORY=2gb
     -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString
     -sSINGLE_FILE=1
     -sSINGLE_FILE_BINARY_ENCODE=0

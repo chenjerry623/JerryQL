@@ -25,7 +25,7 @@ bool isReservedWord(const std::string& word) {
     static const std::set<std::string> reserved = {
         "AND",    "AS",      "ASC",   "BEGIN",   "BY",     "COMMIT", "CREATE", "DELETE", "DESC",  "DROP",
         "EXPLAIN", "FROM",   "INSERT", "INT",    "INTEGER", "INTO",  "KEY",   "LIMIT",
-        "NOT",    "OR",      "ORDER", "PRIMARY", "ROLLBACK", "SELECT", "SET",    "TABLE", "TEXT",
+        "NOT",    "OFFSET",  "OR",      "ORDER", "PRIMARY", "ROLLBACK", "SELECT", "SET",    "TABLE", "TEXT",
         "TRANSACTION",
         "UPDATE", "VALUES",  "WHERE"};
     return reserved.count(toUpper(word)) > 0;
@@ -269,7 +269,10 @@ SelectStmt Parser::parseSelect() {
             stmt.orderBy.push_back(std::move(item));
         } while (acceptSymbol(","));
     }
-    if (acceptKeyword("LIMIT")) stmt.limit = expectInteger("a non-negative integer after LIMIT");
+    if (acceptKeyword("LIMIT")) {
+        stmt.limit = expectInteger("a non-negative integer after LIMIT");
+        if (acceptKeyword("OFFSET")) stmt.offset = expectInteger("a non-negative integer after OFFSET");
+    }
     return stmt;
 }
 
