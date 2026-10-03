@@ -71,6 +71,12 @@ target_link_libraries(jerryql PRIVATE jerryql_core)
 add_executable(jerryql_bench bench/bench_storage.cpp)
 target_link_libraries(jerryql_bench PRIVATE jerryql_core)
 
+find_package(SQLite3)
+if(SQLite3_FOUND)
+  add_executable(jerryql_vs_sqlite bench/bench_vs_sqlite.cpp)
+  target_link_libraries(jerryql_vs_sqlite PRIVATE jerryql_core SQLite::SQLite3)
+endif()
+
 add_executable(jerryql_crashtest tools/crash_test.cpp tools/bank_workload.cpp)
 target_link_libraries(jerryql_crashtest PRIVATE jerryql_core)
 

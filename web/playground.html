@@ -165,11 +165,11 @@ ORDER BY salary DESC;</textarea>
     </div>
     <div>
       <h2>What the planner does</h2>
-      <p>Conditions on the primary key become a point lookup or a key-range scan instead of reading every row. <code>EXPLAIN</code> shows the plan it chose.</p>
+      <p>Conditions on the primary key become a B+tree point lookup or key-range scan instead of reading every row. <code>EXPLAIN</code> shows the plan it chose.</p>
     </div>
     <div>
       <h2>Scope</h2>
-      <p>INT and TEXT columns, one INT primary key, no NULLs, joins or aggregates yet. This demo keeps data in memory; reloading the page resets it.</p>
+      <p>INT and TEXT columns, one INT primary key, transactions; no NULLs, joins or aggregates yet. Here the B+tree and write-ahead log run over in-memory files, so reloading the page resets the data.</p>
     </div>
   </section>
 </div>
@@ -195,6 +195,7 @@ ORDER BY salary DESC;</textarea>
     { label: "Raise for Infra", sql: "UPDATE employees SET salary = salary + 10000 WHERE dept = 'Infra';\nSELECT name, salary FROM employees WHERE dept = 'Infra';" },
     { label: "Shift every key", sql: "-- Rows are read before any are written, so moving keys is safe:\nUPDATE employees SET id = id + 100;\nSELECT id, name FROM employees;" },
     { label: "New table", sql: "CREATE TABLE projects (id INT PRIMARY KEY, title TEXT, owner_id INT);\nINSERT INTO projects VALUES (1, 'Query planner', 1), (2, 'B+tree storage', 3);\nSELECT * FROM projects WHERE owner_id = 3;" },
+    { label: "Rollback", sql: "BEGIN;\nDELETE FROM employees WHERE dept = 'Engineering';\nSELECT name, dept FROM employees;\nROLLBACK;\n-- The delete is undone:\nSELECT name, dept FROM employees;" },
     { label: "Errors", sql: "INSERT INTO employees VALUES (1, 'Duplicate', 'X', 0);\nSELECT name FROM employees WHERE salary = 'lots';\nSELECT salary / 0 FROM employees;\nSELEC * FROM employees;" },
     { label: "Show schema", sql: ".schema" }
   ];

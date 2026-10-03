@@ -28,6 +28,10 @@ jobs:
         run: for s in $(seq 1 100); do JERRYQL_SEED=$s ./build/jerryql_tests randomized > /dev/null || exit 1; done
       - name: Randomized B+tree test, 20 seeds
         run: for s in $(seq 1 20); do JERRYQL_SEED=$s ./build/jerryql_tests btreeRandomized > /dev/null || exit 1; done
+      - name: Crash harness, simulated power loss
+        run: ./build/jerryql_crashtest --mode powerloss --runs 300 --seed ${{ github.run_number }}
+      - name: Crash harness, SIGKILL
+        run: ./build/jerryql_crashtest --mode kill --runs 40 --dir "$RUNNER_TEMP/crash" --seed ${{ github.run_number }}
 
   wasm:
     runs-on: ubuntu-latest

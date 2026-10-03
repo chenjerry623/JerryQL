@@ -40,6 +40,7 @@ SELECT name, salary / 12 AS monthly FROM employees
 UPDATE employees SET salary = salary + 10000 WHERE id = 2;
 DELETE FROM employees WHERE id >= 10 AND id < 20;
 EXPLAIN SELECT name FROM employees WHERE id = 3;
+BEGIN; UPDATE employees SET salary = 0; ROLLBACK;
 DROP TABLE employees;
 ```
 
@@ -60,8 +61,11 @@ jerryql> EXPLAIN SELECT name FROM employees WHERE id >= 2 AND id < 5;
 +-----------------------------------------------+
 ```
 
+- Transactions: `BEGIN` / `COMMIT` / `ROLLBACK`. Outside a transaction,
+  each write statement commits on its own.
+
 **Not supported (yet):** NULL, joins, aggregates/GROUP BY, subqueries,
-secondary indexes, transactions, crash recovery (next milestone).
+secondary indexes, concurrent connections.
 
 Tables live in a single database file (`./build/jerryql --db app.db`), or in
 memory when no file is given. Both use the same B+tree and buffer pool code.
@@ -86,7 +90,8 @@ SQL text -> Lexer -> Parser -> AST -> Planner -> Operator tree -> Executor
 | Storage interface | `src/table_store.h` | Rows keyed by a 64-bit integer: the primary key, or a hidden row id. Ordered range scans. |
 | B+tree | `src/storage/btree.cpp` | One tree per table, rows stored in the leaves (a clustered table, like SQLite's rowid tables). |
 | Buffer pool | `src/storage/buffer_pool.cpp` | Fixed number of 4 KiB frames, pin counts, LRU eviction, dirty write-back. |
-| Pager | `src/storage/pager.cpp` | Header page, page allocation, freelist. |
+| Pager | `src/storage/pager.cpp` | Header page, page allocation, freelist; commit, rollback, checkpoint, recovery. |
+| Write-ahead log | `src/storage/wal.cpp` | Checksummed full-page frames; finds the last valid commit on open. |
 
 Choices worth explaining:
 
@@ -158,11 +163,117 @@ and the table's last row id.
 - Single-threaded.
 - Byte order is the host's (little-endian on x86 and WebAssembly).
 
-**Durability (current state).** Every write statement ends by writing its
-dirty pages and calling `fsync`, so a committed statement survives a
-clean exit or a later crash. A crash *during* that flush can leave the file
-with some pages from the statement and not others. The next milestone, a
-write-ahead log with recovery, removes that window.
+## Write-ahead log and crash recovery
+
+Redo-only, full-page-image logging, close to SQLite's WAL mode.
+
+**Commit.**
+1. Every page the transaction dirtied is appended to `<db>-wal` as a
+   *frame*: page id, commit marker, salt, checksum, then the 4 KiB page.
+2. The header page goes last, flagged as the commit frame.
+3. The log is `fsync`ed.
+
+A transaction is committed when that `fsync` returns, and only then does
+`COMMIT` (or an autocommit statement) return. The database file isn't
+touched on the commit path.
+
+**Reads** check, in order: the buffer pool, this transaction's frames,
+committed frames, then the database file, using an in-memory map from page
+id to newest frame.
+
+**Big transactions.** A dirty page evicted mid-transaction is written to
+the log as an *uncommitted* frame, so a transaction can be larger than the
+buffer pool. `ROLLBACK` discards those frames by rewinding the log's append
+position, and drops any cached copies.
+
+**Checkpoint.** Once the log holds 1,000 committed frames, or when the
+database closes:
+1. Copy the newest version of each page into the database file.
+2. `fsync` the database file.
+3. Reset the log under a new salt.
+
+The order matters: at every moment each committed page is durable in the log
+or the file. A crash mid-checkpoint just replays the log again, which is
+harmless because frames are full page images.
+
+**Recovery** (on open):
+1. Scan frames from the start of the log.
+2. Each frame's 64-bit checksum is chained from the previous frame's. The
+   scan stops at the first frame with a wrong salt or checksum: a torn
+   write, a stale frame from a rolled-back transaction, or a frame from
+   before the last reset.
+3. Everything up to the last valid commit frame is replayed into the
+   database file. Frames after it are discarded.
+
+### Durability guarantee
+
+With the default settings:
+
+- **Atomicity:** after any crash, each transaction is either fully present or
+  fully absent.
+- **Durability:** a transaction whose `COMMIT` returned survives a process
+  crash or power loss, *provided the storage honours `fsync`*. New files also
+  `fsync` their directory.
+- **Not covered:**
+  - Disks or virtual disks that acknowledge `fsync` without persisting.
+  - Corruption of data at rest. Database pages have no checksums; only log
+    frames do.
+  - Concurrent access from several processes.
+- **A failed `COMMIT` is in doubt.** If `fsync` itself reports an error,
+  `COMMIT` reports failure and rolls back in memory. Some of the frames may
+  still have reached the disk, so the transaction may or may not appear
+  after a restart.
+- **`syncOnCommit = false`** skips the commit `fsync`, like SQLite's
+  `synchronous=OFF`. A crash can then lose recent commits, but recovery
+  still yields a consistent database.
+
+### Crash testing
+
+`tools/crash_test.cpp` runs a bank-transfer workload: two account updates
+plus a ledger insert per transaction, some rolled back, plus churn on a table
+of large rows. It uses a 32-page buffer pool and checkpoints every 200
+frames, so crashes land mid-eviction and mid-checkpoint too.
+
+After every crash it reopens the database (running recovery) and checks:
+- every acknowledged commit is present;
+- no acknowledged rollback is present;
+- every balance equals 1,000 plus a replay of the ledger, which catches any
+  half-applied transaction;
+- every table's B+tree passes its structural check.
+
+It has two modes:
+
+- **SIGKILL:** forks a child that runs transactions against a real file and
+  reports each acknowledged `COMMIT` through a pipe. The parent kills it at a
+  random time between 1 and 300 ms, reopens, and verifies. 25 kills in a row
+  share one database, so recovery also runs on already-recovered files.
+- **Simulated power loss:** a SIGKILL can't test `fsync` ordering, because
+  the kernel still writes out everything the process handed it. This mode
+  wraps both files in a fake disk with a volatile write cache, in the spirit
+  of [LazyFS](https://github.com/dsrhaslab/lazyfs) and
+  [ALICE](https://research.cs.wisc.edu/adsl/Software/alice/). Power is cut at
+  a random file operation, and each unsynced write is then kept, lost or
+  torn at a 512-byte boundary.
+
+Results, from `tools/run_crash_tests.sh` (raw output in
+[`bench/results/m2-cloud-container/`](bench/results/m2-cloud-container/)):
+
+| Mode | Crashes | Corrupted | Acknowledged commits, all present after recovery | Runs where recovery replayed log frames |
+|---|---:|---:|---:|---:|
+| SIGKILL, real files on ext4 | 1,000 | 0 | 192,400 | 923 |
+| Simulated power loss | 10,000 | 0 | 539,715 | 9,668 |
+
+**Checking the harness can fail.** `tools/check_harness.sh` builds three
+deliberately broken engines and runs the power-loss mode against each:
+
+| Engine variant | Corrupted runs (of 1,000) |
+|---|---:|
+| Correct engine | 0 |
+| Commit doesn't fsync the log | 938 |
+| Checkpoint doesn't fsync the database file before resetting the log | 248 |
+| Recovery treats every valid frame as committed | 310 |
+
+The second bug is the kind SIGKILL testing can never find.
 
 ## Performance
 
@@ -211,7 +322,7 @@ A comparison against SQLite under matched durability settings is planned
 1. ~~SQL front end: parser, planner, executor~~ (done)
 2. ~~Browser demo (WebAssembly, deployed to GitHub Pages)~~ (done)
 3. ~~On-disk B+tree storage with a buffer pool~~ (done)
-4. Write-ahead log with crash recovery, verified by a SIGKILL crash-injection harness
+4. ~~Write-ahead log with crash recovery, verified by crash-injection harnesses~~ (done)
 5. Benchmarks against SQLite with documented settings
 
 ## References
@@ -220,3 +331,5 @@ A comparison against SQLite under matched durability settings is planned
 - Graefe, "Volcano: An Extensible and Parallel Query Evaluation System" (1994).
 - [SQLite architecture](https://www.sqlite.org/arch.html) and [file format](https://www.sqlite.org/fileformat2.html): tables stored as B-trees keyed by row id, `sqlite_master`, freelist.
 - Yao, "On Random 2-3 Trees" (1978): ~69% expected node utilization under random inserts.
+- [SQLite write-ahead logging](https://www.sqlite.org/wal.html) and its [file format](https://www.sqlite.org/fileformat2.html#walformat): frames, salts, chained checksums, checkpoints.
+- Pillai et al., "All File Systems Are Not Created Equal" (OSDI 2014), the ALICE paper: how applications get crash consistency wrong.

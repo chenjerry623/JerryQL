@@ -1,0 +1,4 @@
+correct engine                                             1000 runs, 0 corrupted
+bug: commit doesn't fsync the log                          1000 runs, 938 corrupted
+bug: checkpoint doesn't fsync the database file            1000 runs, 248 corrupted
+bug: recovery treats every frame as committed              1000 runs, 310 corrupted

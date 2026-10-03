@@ -157,3 +157,90 @@ vs 185 ms) are the stronger claim, and they're what the bullets below use.
     underfull pages; it's a documented limit.
   - What does "cold" mean in the benchmark? An empty buffer pool but a warm
     OS page cache, because dropping that cache needs root.
+
+---
+
+## M2: Write-ahead log, crash recovery, transactions
+
+**What was built:** A write-ahead log makes every committed transaction survive a
+crash, recovery replays it on startup, and `BEGIN`/`COMMIT`/`ROLLBACK` group
+statements atomically. Two crash-injection harnesses verify it: real `SIGKILL`s,
+and a simulated power cut that drops or tears unsynced writes.
+
+**Commits:** `6bb38c6` (WAL, recovery, transactions, harnesses). The crash
+numbers below were produced at this commit.
+
+### Numbers
+
+| Number | What it is | Reproduce with |
+|---|---|---|
+| 1,000 SIGKILL runs, 0 corrupted | fork + SIGKILL at a random 1–300 ms, reopen, verify; 192,400 acknowledged commits all present | `tools/run_crash_tests.sh m2-cloud-container` → `bench/results/m2-cloud-container/kill.txt` |
+| 10,000 simulated power cuts, 0 corrupted | cut at a random file operation; unsynced writes kept, lost or torn; 539,715 acknowledged commits all present | same → `powerloss.txt` |
+| 3 of 3 injected bugs caught | no commit fsync: 938/1,000 runs flagged; no fsync before checkpoint: 248/1,000; recovery ignoring the commit marker: 310/1,000 | `tools/check_harness.sh 1000` → `harness_self_check.txt` |
+| 58 unit tests | after M2 | `./build/jerryql_tests` |
+
+Machine: same cloud VM as M1 (`bench/results/m2-cloud-container/environment.txt`).
+
+**Linux on the skills line: earned.** The project now does POSIX file I/O,
+`fsync` ordering (including directory fsync), and `fork`/`SIGKILL`/`waitpid`
+crash testing. That's concrete evidence for "Linux" next to C++.
+
+### Candidate resume bullets (M2)
+
+- **Database-focused:** Built a SQL database engine from scratch in C++17
+  (parser, planner, disk-based B+tree, buffer pool, write-ahead log with
+  crash recovery); 0 corrupted databases across 1,000 SIGKILL and 10,000
+  simulated power-loss crash tests, and the harness caught each of 3
+  deliberately injected durability bugs.
+- **General backend/infra:** Wrote a crash-safe storage engine in C++ on Linux
+  (write-ahead log, fsync ordering, checksummed recovery, transactions) under
+  a hand-written SQL layer, verified with fork/SIGKILL and simulated
+  power-loss tests: 11,000 crashes, 0 lost commits.
+- **Short:** Built a crash-safe SQL database in C++ (B+tree, write-ahead log,
+  transactions); 0 lost commits across 11,000 injected crashes.
+
+Combined with M1 for a two-bullet project entry:
+
+1. Built a SQL database engine from scratch in C++17: hand-written parser,
+   query planner, disk-based B+tree with an LRU buffer pool, and a live
+   WebAssembly demo; indexed lookups take 3.5 µs vs 185 ms for a full scan
+   on 1M rows.
+2. Added a write-ahead log with crash recovery and transactions; verified
+   with fork/SIGKILL and simulated power-loss testing: 0 corrupted
+   databases in 11,000 crashes, and the harness caught 3 of 3 deliberately
+   injected durability bugs.
+
+### Interview story (STAR)
+
+- **Situation:** The first crash test killed the process with `SIGKILL` and
+  checked the data, and it passed every time. That should have raised
+  suspicion: after a `SIGKILL` the kernel still writes out everything the
+  process handed it, so a missing or misplaced `fsync` is invisible to that
+  test.
+- **Task:** Build a test that can actually fail when the `fsync` protocol is
+  wrong, and prove it can.
+- **Action:**
+  - Wrote a fault-injecting file layer that models a disk with a volatile
+    cache. Writes become durable only at `fsync`. At a random operation the
+    power is "cut", and each unsynced write is then kept, lost, or torn at a
+    512-byte sector.
+  - Then *mutation-tested the harness itself*: a script builds three broken
+    engines and confirms the harness flags each one.
+  - The three bugs: no `fsync` at commit, no `fsync` of the database file
+    before the log is reset in a checkpoint, and recovery ignoring the
+    commit marker.
+- **Result:**
+  - The broken engines were flagged in 938, 248 and 310 of 1,000 runs. The
+    real engine: 0 of 10,000.
+  - Lesson: a test suite that never fails is a claim, not evidence. The
+    checkpoint-ordering bug is the one SIGKILL testing would never find.
+- **Likely follow-ups:**
+  - Why full page images instead of logical redo records? Recovery
+    is idempotent and simple, and torn page writes in the database file
+    can't happen silently. The cost is write amplification, the same
+    trade-off as PostgreSQL's full-page writes.
+  - What happens if `fsync` fails? The commit is reported failed and
+    rolled back in memory, but it's *in doubt* on disk (PostgreSQL's
+    2018 "fsyncgate" is the classic reference).
+  - What isn't covered? Disks that lie about `fsync`, bit rot in the
+    database file (no page checksums), and concurrent writers.

@@ -38,6 +38,7 @@ const char* const kHelpText =
     "  EXPLAIN SELECT ...      show the query plan\n"
     "  UPDATE t SET col = expr, ... [WHERE ...]\n"
     "  DELETE FROM t [WHERE ...]\n"
+    "  BEGIN / COMMIT / ROLLBACK  group statements into one transaction\n"
     "Expressions: + - * /  = <> < <= > >=  AND OR NOT  'text'  123\n"
     "Shell commands:\n"
     "  .tables          list tables\n"
