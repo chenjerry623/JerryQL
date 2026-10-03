@@ -244,3 +244,61 @@ Combined with M1 for a two-bullet project entry:
     2018 "fsyncgate" is the classic reference).
   - What isn't covered? Disks that lie about `fsync`, bit rot in the
     database file (no page checksums), and concurrent writers.
+
+---
+
+## M3: Benchmarks against SQLite
+
+**What was built:** A side-by-side benchmark that runs identical SQL on JerryQL
+and SQLite 3.45.1 with matched page size, cache size, WAL checkpointing and
+durability settings. Median/p95, cold and warm, with raw latencies committed.
+
+**Commit:** `9d629b7` (the numbers below were produced at this commit).
+
+### Numbers (1M rows, durable mode unless noted)
+
+| Number | What it is | Reproduce with |
+|---|---|---|
+| 3.4 µs vs 3.5 µs | JerryQL point lookup vs SQLite with a prepared statement: on par | `bench/run_vs_sqlite.sh m3-cloud-container` → `summary_durable.md` |
+| 0.54× | JerryQL time ÷ SQLite time for point lookups when both parse SQL text | same |
+| 1.0× | single-row INSERT + fsynced commit (284 µs vs 283 µs) | same |
+| 2.5× slower | bulk load (1,000-row transactions) | same |
+| 4.9× slower | full scan of 1M rows | same |
+| 27% smaller | SQLite's file vs JerryQL's (64 vs 88 MB) | same |
+
+How to talk about it: "on par with SQLite for indexed lookups and fsync-bound
+commits, 2.5–5× slower for scans and bulk loads." Don't say "faster than
+SQLite": the 0.54× only holds without prepared statements, and the README
+says so.
+
+### Candidate resume bullets (M3)
+
+- **Database-focused:** Built a SQL database engine from scratch in C++17 (parser,
+  planner, B+tree, buffer pool, write-ahead log); matches SQLite's indexed
+  lookup latency (3.4 µs vs 3.5 µs at 1M rows) under documented, matched
+  settings; 0 corrupted databases across 11,000 injected crashes.
+- **General backend/infra:** Wrote a crash-safe SQL storage engine in C++ on Linux;
+  benchmarked against SQLite on identical workloads (on par for lookups and
+  fsync-bound commits, within 5× on scans), and verified durability with
+  fork/SIGKILL and simulated power-loss testing.
+- **Short:** Built a crash-safe SQL database in C++ that matches SQLite's indexed
+  lookup latency; 0 lost commits in 11,000 injected crashes.
+
+### Interview story (STAR)
+
+- **Situation:** The first SQLite comparison showed JerryQL nearly 2× *faster* on
+  point lookups. A from-scratch engine beating SQLite at its core operation
+  is a red flag, not a win.
+- **Task:** Find out whether the comparison was fair before reporting it.
+- **Action:** Broke the latency down. Both engines were being handed SQL text
+  for every query. SQLite compiles each statement to bytecode (its VDBE), so
+  that compile step was most of its time. I added a reference run with a
+  prepared statement, which is how SQLite is used in practice.
+- **Result:**
+  - With the compile cost removed, SQLite took 3.5 µs vs JerryQL's 3.4 µs:
+    on par, not faster.
+  - The README reports both numbers and says which one is the fair
+    comparison.
+  - The same breakdown showed where JerryQL really loses: full scans,
+    because it decodes every column of every row, which SQLite doesn't.
+    That became the next optimization target.

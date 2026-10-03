@@ -296,8 +296,61 @@ and execution, on a 1,000,000-row database file (88 MB) with a 4 MiB buffer pool
   per-query latencies and machine details are in
   [`bench/results/m1-cloud-container/`](bench/results/m1-cloud-container/).
 
-A comparison against SQLite under matched durability settings is planned
-(see the roadmap).
+### Compared with SQLite
+
+Both engines get exactly the same SQL text, data and machine:
+- 1M rows of `(id INTEGER PRIMARY KEY, k INTEGER, payload TEXT)`. In SQLite
+  `INTEGER PRIMARY KEY` makes the table clustered on `id`, as JerryQL's is.
+- Settings matched as closely as the two engines allow: 4 KiB pages, a
+  4 MiB page cache, write-ahead logging, and a checkpoint every ~1,000 pages.
+- SQLite 3.45.1 is the Ubuntu system library. Settings are in
+  [`environment.txt`](bench/results/m3-cloud-container/environment.txt).
+- JerryQL has no prepared statements, so SQLite also parses every statement
+  from text. SQLite's prepared-statement time is shown separately for
+  reference.
+
+**Durable mode** (SQLite `synchronous=FULL`, JerryQL default; both fsync the
+log on every commit). Median latency:
+
+| Workload | JerryQL | SQLite | JerryQL ÷ SQLite |
+|---|---:|---:|---:|
+| Point lookup by primary key (warm) | 3.4 µs | 6.2 µs | 0.54× |
+| ↳ SQLite with a prepared statement (reference) | | 3.5 µs | |
+| Range scan, 100 rows | 30.8 µs | 33.2 µs | 0.93× |
+| Full scan of 1M rows (unindexed filter) | 194 ms | 39.4 ms | 4.9× |
+| Bulk load, 1,000-row transaction | 3.8 ms | 1.5 ms | 2.5× |
+| Single-row `INSERT` + commit | 284 µs | 283 µs | 1.0× |
+| Single-row `UPDATE` + commit | 252 µs | 175 µs | 1.4× |
+
+**Relaxed mode** (SQLite `synchronous=NORMAL`, JerryQL `syncOnCommit=false`;
+neither fsyncs at commit, both fsync at checkpoints):
+
+| Workload | JerryQL | SQLite | JerryQL ÷ SQLite |
+|---|---:|---:|---:|
+| Point lookup by primary key (warm) | 3.4 µs | 5.8 µs | 0.59× |
+| Full scan of 1M rows | 178 ms | 41.7 ms | 4.3× |
+| Single-row `INSERT` + commit | 20.0 µs | 8.5 µs | 2.4× |
+| Single-row `UPDATE` + commit | 16.8 µs | 9.9 µs | 1.7× |
+
+What the numbers say:
+
+- **Point lookups:** JerryQL is faster only when both engines parse SQL text
+  on every call. SQLite compiles each statement to bytecode first. With
+  that cost removed (prepared statement), SQLite matches JerryQL. The fair
+  summary is that lookups are on par with SQLite's.
+- **Durable commits:** both take about 0.25–0.3 ms, the cost of an `fsync`
+  on this VM's disk.
+- **Bulk loads and full scans:** SQLite is 2.5–5× faster, and its file is
+  27% smaller (64 MB vs 88 MB). SQLite stores integers as variable-length
+  integers and decodes columns lazily. JerryQL uses fixed 8-byte integers
+  with type tags and decodes, then copies, every row it reads.
+
+The p95 columns, the cold-cache runs and raw per-query latencies are in
+[`bench/results/m3-cloud-container/`](bench/results/m3-cloud-container/).
+Reproduce with `bench/run_vs_sqlite.sh <name> 1000000`.
+
+Caveat: this is a 4-vCPU cloud VM, and fsync latency depends on its virtual
+disk. The ratios are more meaningful than the absolute numbers.
 
 ## Testing
 
@@ -323,7 +376,8 @@ A comparison against SQLite under matched durability settings is planned
 2. ~~Browser demo (WebAssembly, deployed to GitHub Pages)~~ (done)
 3. ~~On-disk B+tree storage with a buffer pool~~ (done)
 4. ~~Write-ahead log with crash recovery, verified by crash-injection harnesses~~ (done)
-5. Benchmarks against SQLite with documented settings
+5. ~~Benchmarks against SQLite with documented settings~~ (done)
+6. Profile and speed up full scans and bulk loads (the biggest gaps to SQLite)
 
 ## References
 
