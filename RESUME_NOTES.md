@@ -326,3 +326,30 @@ the SQLite numbers are left off the resume until the harness is fixed and re-run
   3.5 µs indexed lookups vs. 53 ms full scans on 1M rows.
 - Added a write-ahead log with crash recovery; 0 corrupted databases across
   11,000 injected crashes (1,000 real SIGKILLs + 10,000 simulated power cuts).
+
+---
+
+## Update: SQLite comparison re-run with the harness fixed (`d59b829`)
+
+The harness now builds identical result rows for both engines. Results at 1M
+rows, durable mode (`bench/run_vs_sqlite.sh m3-fixed-harness 1000000` →
+`bench/results/m3-fixed-harness/`):
+
+| Number | What it is |
+|---|---|
+| 1.2× | JerryQL full-scan time ÷ SQLite's (50 ms vs 42 ms); 4.9× before the `perf`-guided fix |
+| 3.4 µs vs 3.5–4.8 µs | JerryQL point lookup vs SQLite with a prepared statement (two runs): on par |
+| 2.4× | bulk load time ÷ SQLite's |
+| 1.4× | single-row durable commit time ÷ SQLite's |
+
+### Bullet options using these
+
+- Built a SQL database from scratch in C++ (B+tree, buffer pool, write-ahead
+  log); profiled with `perf` to cut full-scan time **3.5×**, bringing scans
+  within **1.2×** of SQLite on **1M** rows.
+- One-liner with a baseline a reader understands: "...serving key lookups in
+  **3.5 µs** on a **1M**-row table, on par with SQLite."
+
+Interview framing: on par for lookups (prepared-statement comparison),
+1.2× on scans, 2.4× on bulk loads, and 27% larger files. Know the reasons:
+varints vs fixed 8-byte integers, and whole-page re-encoding on insert.
