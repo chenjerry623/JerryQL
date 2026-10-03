@@ -9,10 +9,11 @@ ExprPtr makeLiteral(Value value) {
     return e;
 }
 
-ExprPtr makeColumn(std::string name) {
+ExprPtr makeColumn(std::string name, std::string table) {
     auto e = std::make_unique<Expr>();
     e->kind = ExprKind::Column;
     e->column = std::move(name);
+    e->table = std::move(table);
     return e;
 }
 
@@ -46,6 +47,7 @@ ExprPtr cloneExpr(const Expr& expr) {
     copy->kind = expr.kind;
     copy->value = expr.value;
     copy->column = expr.column;
+    copy->table = expr.table;
     copy->columnIndex = expr.columnIndex;
     copy->unaryOp = expr.unaryOp;
     copy->binaryOp = expr.binaryOp;
@@ -106,7 +108,7 @@ std::string exprToString(const Expr& expr) {
         case ExprKind::Literal:
             return expr.value.toSqlLiteral();
         case ExprKind::Column:
-            return expr.column;
+            return expr.table.empty() ? expr.column : expr.table + "." + expr.column;
         case ExprKind::Unary:
             return (expr.unaryOp == UnaryOp::Not ? "NOT " : "-") + operandToString(*expr.left);
         case ExprKind::Binary:

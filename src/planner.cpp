@@ -204,16 +204,24 @@ OperatorPtr tryIndexScan(const Table& table, const Expr* where) {
 
 }  // namespace
 
+namespace {
+
 // Access path, in order of preference: a primary-key lookup or range scan
 // (the table is clustered on its key), then a secondary index, then a full scan.
-OperatorPtr planRowSource(const Table& table, Expr* where) {
-    if (where) bindColumns(*where, table.schema);
-    KeyRange range = primaryKeyRange(where, table.schema);
+OperatorPtr planTableSource(const Table& table, const Schema& scoped, Expr* where) {
+    if (where) bindColumns(*where, scoped);
+    KeyRange range = primaryKeyRange(where, scoped);
     OperatorPtr plan;
     if (range.isAll() && where) plan = tryIndexScan(table, where);
     if (!plan) plan = std::make_unique<ScanOperator>(*table.store, range, describeScan(table, range));
     if (where) plan = std::make_unique<FilterOperator>(std::move(plan), *where);
     return plan;
+}
+
+}  // namespace
+
+OperatorPtr planRowSource(const Table& table, Expr* where) {
+    return planTableSource(table, scopedSchema(table.schema, table.name), where);
 }
 
 namespace {
@@ -304,14 +312,21 @@ bool resolveOrderAliases(SelectStmt& stmt, std::vector<bool>& resolved) {
     return any;
 }
 
-// SELECT ... GROUP BY: row source -> Aggregate -> Filter (HAVING) -> Sort ->
+// The rows a query reads before aggregation, sorting and projection, and
+// the schema of those rows (columns qualified by table name or alias).
+struct Source {
+    OperatorPtr plan;
+    Schema schema;
+};
+
+// SELECT ... GROUP BY: source -> Aggregate -> Filter (HAVING) -> Sort ->
 // Limit -> Projection, with everything after the aggregate rewritten to read
 // its output row.
-OperatorPtr planAggregateSelect(SelectStmt& stmt, const Table& table) {
+OperatorPtr planAggregateSelect(SelectStmt& stmt, Source source) {
     if (stmt.items.empty()) throw SqlError("SELECT * can't be combined with GROUP BY or aggregates");
-    for (ExprPtr& key : stmt.groupBy) bindColumns(*key, table.schema);
+    for (ExprPtr& key : stmt.groupBy) bindColumns(*key, source.schema);
 
-    AggregateRewriter rewriter(stmt.groupBy, table.schema);
+    AggregateRewriter rewriter(stmt.groupBy, source.schema);
     for (SelectItem& item : stmt.items) rewriter.rewrite(item.expr);
     if (stmt.having) rewriter.rewrite(stmt.having);
     std::vector<bool> aliased;
@@ -322,25 +337,182 @@ OperatorPtr planAggregateSelect(SelectStmt& stmt, const Table& table) {
 
     std::vector<const Expr*> keys;
     for (const ExprPtr& key : stmt.groupBy) keys.push_back(key.get());
-    OperatorPtr plan = planRowSource(table, stmt.where.get());
+    OperatorPtr plan = std::move(source.plan);
     plan = std::make_unique<AggregateOperator>(std::move(plan), std::move(keys), rewriter.takeAggregates());
     if (stmt.having) plan = std::make_unique<FilterOperator>(std::move(plan), *stmt.having);
     return plan;
 }
 
+// ---------- FROM / JOIN ----------
+
+// Which of the joined tables (by position) an expression bound to the
+// combined schema reads. `offsets[i]` is where table i's columns start.
+void tablesUsed(const Expr& expr, const std::vector<size_t>& offsets, std::vector<bool>& used) {
+    if (expr.kind == ExprKind::Column && expr.columnIndex) {
+        size_t t = offsets.size() - 1;
+        while (*expr.columnIndex < offsets[t]) --t;
+        used[t] = true;
+    }
+    if (expr.left) tablesUsed(*expr.left, offsets, used);
+    if (expr.right) tablesUsed(*expr.right, offsets, used);
+}
+
+bool onlyReadsBelow(const Expr& expr, size_t width) {
+    if (expr.kind == ExprKind::Column && (!expr.columnIndex || *expr.columnIndex >= width)) return false;
+    if (expr.kind == ExprKind::Aggregate) return false;
+    return (!expr.left || onlyReadsBelow(*expr.left, width)) && (!expr.right || onlyReadsBelow(*expr.right, width));
+}
+
+ExprPtr andAll(std::vector<ExprPtr> parts) {
+    ExprPtr result;
+    for (ExprPtr& part : parts) {
+        result = result ? makeBinary(BinaryOp::And, std::move(result), std::move(part)) : std::move(part);
+    }
+    return result;
+}
+
+// An equality "right.column = <expression over left columns>" usable to
+// drive a join, with the right column's position in the right table.
+struct JoinKey {
+    const Expr* condition = nullptr;
+    const Expr* leftKey = nullptr;
+    size_t rightColumn = 0;
+};
+
+std::vector<JoinKey> joinKeys(const Expr& on, size_t leftWidth) {
+    std::vector<const Expr*> conjuncts;
+    collectConjuncts(&on, conjuncts);
+    std::vector<JoinKey> keys;
+    for (const Expr* c : conjuncts) {
+        if (c->kind != ExprKind::Binary || c->binaryOp != BinaryOp::Eq) continue;
+        for (const auto& [side, other] : {std::pair(c->right.get(), c->left.get()),
+                                          std::pair(c->left.get(), c->right.get())}) {
+            if (side->kind == ExprKind::Column && side->columnIndex && *side->columnIndex >= leftWidth &&
+                onlyReadsBelow(*other, leftWidth)) {
+                keys.push_back({c, other, *side->columnIndex - leftWidth});
+                break;
+            }
+        }
+    }
+    return keys;
+}
+
+Schema concatenateSchemas(const Schema& left, const Schema& right) {
+    Schema combined;
+    combined.columns = left.columns;
+    combined.columns.insert(combined.columns.end(), right.columns.begin(), right.columns.end());
+    return combined;  // no primary key: rows of a join aren't keyed
+}
+
+// Builds the joined rows, left-deep in FROM order. For each JOIN, in order of
+// preference: look the right row up by primary key or secondary index for
+// each left row (index nested loop), hash the right table on the join
+// column (hash join), or compare every pair (nested loop). WHERE conditions
+// that touch a single table are pushed into that table's scan, where they
+// can use its key or indexes; the whole WHERE is applied again at the end.
+Source planJoins(SelectStmt& stmt, const std::vector<const Table*>& tables,
+                 const std::vector<Schema>& scoped, const std::vector<std::string>& names) {
+    std::vector<size_t> offsets;
+    Schema combined;
+    for (const Schema& schema : scoped) {
+        offsets.push_back(combined.columns.size());
+        combined = concatenateSchemas(combined, schema);
+    }
+
+    std::vector<std::vector<ExprPtr>> pushedParts(tables.size());
+    if (stmt.where) {
+        bindColumns(*stmt.where, combined);
+        std::vector<const Expr*> conjuncts;
+        collectConjuncts(stmt.where.get(), conjuncts);
+        for (const Expr* c : conjuncts) {
+            std::vector<bool> used(tables.size(), false);
+            tablesUsed(*c, offsets, used);
+            if (std::count(used.begin(), used.end(), true) != 1) continue;
+            size_t t = size_t(std::find(used.begin(), used.end(), true) - used.begin());
+            pushedParts[t].push_back(cloneExpr(*c));
+        }
+    }
+    std::vector<Expr*> pushed(tables.size(), nullptr);
+    for (size_t t = 0; t < tables.size(); ++t) {
+        if (pushedParts[t].empty()) continue;
+        stmt.derived.push_back(andAll(std::move(pushedParts[t])));
+        pushed[t] = stmt.derived.back().get();
+    }
+
+    Source left{planTableSource(*tables[0], scoped[0], pushed[0]), scoped[0]};
+    for (size_t j = 1; j < tables.size(); ++j) {
+        const Table& right = *tables[j];
+        JoinClause& join = stmt.joins[j - 1];
+        size_t leftWidth = left.schema.columns.size();
+        Schema next = concatenateSchemas(left.schema, scoped[j]);
+        bindColumns(*join.on, next);
+        if (containsAggregate(*join.on)) throw SqlError("aggregates aren't allowed in JOIN ... ON");
+
+        std::vector<JoinKey> keys = joinKeys(*join.on, leftWidth);
+        const JoinKey* byPrimaryKey = nullptr;
+        const JoinKey* byIndex = nullptr;
+        for (const JoinKey& key : keys) {
+            if (right.schema.primaryKey == key.rightColumn && !byPrimaryKey) byPrimaryKey = &key;
+            if (right.indexOn(key.rightColumn) && !byIndex) byIndex = &key;
+        }
+        const std::string on = exprToString(*join.on);
+        OperatorPtr plan;
+        if (byPrimaryKey) {
+            plan = std::make_unique<IndexNestedLoopJoinOperator>(
+                std::move(left.plan), *right.store, nullptr, *byPrimaryKey->leftKey, join.on.get(),
+                "INDEX NESTED LOOP JOIN " + names[j] + " USING PRIMARY KEY (" + exprToString(*byPrimaryKey->condition) + ")");
+        } else if (byIndex) {
+            const Index& index = *right.indexOn(byIndex->rightColumn);
+            plan = std::make_unique<IndexNestedLoopJoinOperator>(
+                std::move(left.plan), *right.store, index.tree.get(), *byIndex->leftKey, join.on.get(),
+                "INDEX NESTED LOOP JOIN " + names[j] + " USING " + index.name + " (" + exprToString(*byIndex->condition) + ")");
+        } else if (!keys.empty()) {
+            plan = std::make_unique<HashJoinOperator>(
+                std::move(left.plan), planTableSource(right, scoped[j], pushed[j]), *keys.front().leftKey,
+                keys.front().rightColumn, join.on.get(), "HASH JOIN " + names[j] + " ON (" + on + ")");
+        } else {
+            plan = std::make_unique<NestedLoopJoinOperator>(
+                std::move(left.plan), planTableSource(right, scoped[j], pushed[j]), join.on.get(),
+                "NESTED LOOP JOIN " + names[j] + " ON (" + on + ")");
+        }
+        left = Source{std::move(plan), std::move(next)};
+    }
+    if (stmt.where) left.plan = std::make_unique<FilterOperator>(std::move(left.plan), *stmt.where);
+    return left;
+}
+
+Source planFrom(SelectStmt& stmt, const std::vector<const Table*>& tables) {
+    std::vector<std::string> names = {stmt.alias.empty() ? stmt.table : stmt.alias};
+    for (const JoinClause& join : stmt.joins) names.push_back(join.alias.empty() ? join.table : join.alias);
+    std::vector<Schema> scoped;
+    for (size_t i = 0; i < tables.size(); ++i) {
+        if (std::count(names.begin(), names.end(), names[i]) > 1) {
+            throw SqlError("table name " + names[i] + " is used twice; give one of them an alias");
+        }
+        scoped.push_back(scopedSchema(tables[i]->schema, names[i]));
+    }
+    if (tables.size() == 1) return Source{planTableSource(*tables[0], scoped[0], stmt.where.get()), scoped[0]};
+    return planJoins(stmt, tables, scoped, names);
+}
+
 }  // namespace
 
-OperatorPtr planSelect(SelectStmt& stmt, const Table& table) {
+PlannedSelect planSelect(SelectStmt& stmt, const std::vector<const Table*>& tables) {
     if (stmt.limit && *stmt.limit < 0) throw SqlError("LIMIT must not be negative");
+    Source source = planFrom(stmt, tables);
+    PlannedSelect planned;
+    if (stmt.items.empty()) {
+        for (const Column& column : source.schema.columns) planned.columns.push_back(column.name);
+    }
     OperatorPtr plan;
     if (isAggregateQuery(stmt)) {
-        plan = planAggregateSelect(stmt, table);
+        plan = planAggregateSelect(stmt, std::move(source));
     } else {
         std::vector<bool> aliased;
         resolveOrderAliases(stmt, aliased);
-        for (SelectItem& item : stmt.items) bindColumns(*item.expr, table.schema);
-        for (OrderItem& item : stmt.orderBy) bindColumns(*item.expr, table.schema);
-        plan = planRowSource(table, stmt.where.get());
+        for (SelectItem& item : stmt.items) bindColumns(*item.expr, source.schema);
+        for (OrderItem& item : stmt.orderBy) bindColumns(*item.expr, source.schema);
+        plan = std::move(source.plan);
     }
     if (!stmt.orderBy.empty()) {
         std::vector<SortKey> keys;
@@ -352,10 +524,14 @@ OperatorPtr planSelect(SelectStmt& stmt, const Table& table) {
     }
     if (!stmt.items.empty()) {
         std::vector<const Expr*> exprs;
-        for (const SelectItem& item : stmt.items) exprs.push_back(item.expr.get());
+        for (const SelectItem& item : stmt.items) {
+            exprs.push_back(item.expr.get());
+            planned.columns.push_back(item.alias.empty() ? exprToString(*item.expr) : item.alias);
+        }
         plan = std::make_unique<ProjectionOperator>(std::move(plan), std::move(exprs));
     }
-    return plan;
+    planned.plan = std::move(plan);
+    return planned;
 }
 
 }  // namespace jerryql

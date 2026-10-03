@@ -1,0 +1,163 @@
+jerryql> CREATE TABLE users (id INT PRIMARY KEY, name TEXT, city TEXT);
+CREATE TABLE
+
+jerryql> CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, amount INT, status TEXT);
+CREATE TABLE
+
+jerryql> CREATE TABLE cities (name TEXT, country TEXT);
+CREATE TABLE
+
+jerryql> INSERT INTO users VALUES (1, 'Ada', 'London'), (2, 'Grace', 'New York'), (3, 'Linus', 'Helsinki');
+INSERT 3
+
+jerryql> INSERT INTO orders VALUES (10, 1, 250, 'paid'), (11, 1, 75, 'refunded'), (12, 2, 300, 'paid'), (13, 3, 40, 'paid'), (14, 9, 5, 'paid');
+INSERT 5
+
+jerryql> INSERT INTO cities VALUES ('London', 'UK'), ('Helsinki', 'Finland'), ('New York', 'USA');
+INSERT 3
+
+jerryql> EXPLAIN SELECT u.name, o.amount FROM orders o JOIN users u ON o.user_id = u.id;
++--------------------------------------------------------------------+
+| QUERY PLAN                                                         |
++--------------------------------------------------------------------+
+| PROJECT u.name, o.amount                                           |
+|   -> INDEX NESTED LOOP JOIN u USING PRIMARY KEY (o.user_id = u.id) |
+|     -> SEQ SCAN orders                                             |
++--------------------------------------------------------------------+
+(3 rows)
+
+jerryql> SELECT u.name, o.amount FROM orders o JOIN users u ON o.user_id = u.id ORDER BY o.amount DESC;
++--------+----------+
+| u.name | o.amount |
++--------+----------+
+| Grace  |      300 |
+| Ada    |      250 |
+| Ada    |       75 |
+| Linus  |       40 |
++--------+----------+
+(4 rows)
+
+jerryql> EXPLAIN SELECT u.name, c.country FROM users u JOIN cities c ON c.name = u.city;
++---------------------------------------+
+| QUERY PLAN                            |
++---------------------------------------+
+| PROJECT u.name, c.country             |
+|   -> HASH JOIN c ON (c.name = u.city) |
+|     -> SEQ SCAN users                 |
+|     -> SEQ SCAN cities                |
++---------------------------------------+
+(4 rows)
+
+jerryql> SELECT u.name, c.country FROM users u JOIN cities c ON c.name = u.city;
++--------+-----------+
+| u.name | c.country |
++--------+-----------+
+| Ada    | UK        |
+| Grace  | USA       |
+| Linus  | Finland   |
++--------+-----------+
+(3 rows)
+
+jerryql> SELECT u.name, c.country, o.amount FROM orders o JOIN users u ON u.id = o.user_id JOIN cities c ON c.name = u.city WHERE o.status = 'paid' AND c.country <> 'USA';
++--------+-----------+----------+
+| u.name | c.country | o.amount |
++--------+-----------+----------+
+| Ada    | UK        |      250 |
+| Linus  | Finland   |       40 |
++--------+-----------+----------+
+(2 rows)
+
+jerryql> EXPLAIN SELECT u.name, c.country, o.amount FROM orders o JOIN users u ON u.id = o.user_id JOIN cities c ON c.name = u.city WHERE o.status = 'paid' AND c.country <> 'USA';
++------------------------------------------------------------------------+
+| QUERY PLAN                                                             |
++------------------------------------------------------------------------+
+| PROJECT u.name, c.country, o.amount                                    |
+|   -> FILTER (o.status = 'paid') AND (c.country <> 'USA')               |
+|     -> HASH JOIN c ON (c.name = u.city)                                |
+|       -> INDEX NESTED LOOP JOIN u USING PRIMARY KEY (u.id = o.user_id) |
+|         -> FILTER o.status = 'paid'                                    |
+|           -> SEQ SCAN orders                                           |
+|       -> FILTER c.country <> 'USA'                                     |
+|         -> SEQ SCAN cities                                             |
++------------------------------------------------------------------------+
+(8 rows)
+
+jerryql> SELECT u.name, COUNT(*) AS orders, SUM(o.amount) AS total FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.name ORDER BY total DESC;
++--------+--------+-------+
+| u.name | orders | total |
++--------+--------+-------+
+| Ada    |      2 |   325 |
+| Grace  |      1 |   300 |
+| Linus  |      1 |    40 |
++--------+--------+-------+
+(3 rows)
+
+jerryql> SELECT a.name, b.name FROM users a JOIN users b ON a.id < b.id;
++--------+--------+
+| a.name | b.name |
++--------+--------+
+| Ada    | Grace  |
+| Ada    | Linus  |
+| Grace  | Linus  |
++--------+--------+
+(3 rows)
+
+jerryql> EXPLAIN SELECT a.name, b.name FROM users a JOIN users b ON a.id < b.id;
++------------------------------------------+
+| QUERY PLAN                               |
++------------------------------------------+
+| PROJECT a.name, b.name                   |
+|   -> NESTED LOOP JOIN b ON (a.id < b.id) |
+|     -> SEQ SCAN users                    |
+|     -> SEQ SCAN users                    |
++------------------------------------------+
+(4 rows)
+
+jerryql> CREATE INDEX orders_user ON orders (user_id);
+CREATE INDEX
+
+jerryql> EXPLAIN SELECT u.name, o.amount FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = 1;
++----------------------------------------------------------------------+
+| QUERY PLAN                                                           |
++----------------------------------------------------------------------+
+| PROJECT u.name, o.amount                                             |
+|   -> FILTER u.id = 1                                                 |
+|     -> INDEX NESTED LOOP JOIN o USING orders_user (o.user_id = u.id) |
+|       -> FILTER u.id = 1                                             |
+|         -> PK LOOKUP users (id = 1)                                  |
++----------------------------------------------------------------------+
+(5 rows)
+
+jerryql> SELECT u.name, o.amount FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = 1;
++--------+----------+
+| u.name | o.amount |
++--------+----------+
+| Ada    |      250 |
+| Ada    |       75 |
++--------+----------+
+(2 rows)
+
+jerryql> SELECT * FROM users u JOIN orders o ON o.user_id = u.id WHERE o.amount > 100;
++----+-------+----------+----+---------+--------+--------+
+| id | name  | city     | id | user_id | amount | status |
++----+-------+----------+----+---------+--------+--------+
+|  1 | Ada   | London   | 10 |       1 |    250 | paid   |
+|  2 | Grace | New York | 12 |       2 |    300 | paid   |
++----+-------+----------+----+---------+--------+--------+
+(2 rows)
+
+jerryql> SELECT name FROM users JOIN cities ON cities.name = users.city;
+Error: column name is ambiguous; qualify it, e.g. users.name
+
+jerryql> SELECT id FROM users u JOIN orders o ON o.user_id = u.id;
+Error: column id is ambiguous; qualify it, e.g. u.id
+
+jerryql> SELECT * FROM users u LEFT JOIN orders o ON o.user_id = u.id;
+Error: syntax error at position 1997: expected JOIN (only inner joins are supported) but found 'LEFT'
+
+jerryql> SELECT * FROM users JOIN users ON users.id = users.id;
+Error: table name users is used twice; give one of them an alias
+
+jerryql> SELECT x.name FROM users u JOIN orders o ON o.user_id = u.id;
+Error: no such column: x.name
+

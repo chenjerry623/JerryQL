@@ -62,6 +62,7 @@ private:
     std::vector<ExprPtr> parseValuesTuple();
     SelectStmt parseSelect();
     SelectItem parseSelectItem();
+    std::string parseOptionalAlias();
     UpdateStmt parseUpdate();
     DeleteStmt parseDelete();
     TransactionStmt parseTransaction();

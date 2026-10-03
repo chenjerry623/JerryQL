@@ -353,3 +353,71 @@ rows, durable mode (`bench/run_vs_sqlite.sh m3-fixed-harness 1000000` →
 Interview framing: on par for lookups (prepared-statement comparison),
 1.2× on scans, 2.4× on bulk loads, and 27% larger files. Know the reasons:
 varints vs fixed 8-byte integers, and whole-page re-encoding on insert.
+
+---
+
+## M4: Aggregates, secondary indexes, joins
+
+**What was built:**
+- `GROUP BY` with `COUNT`/`SUM`/`MIN`/`MAX`/`AVG` and `HAVING`.
+- B+tree keys generalized to variable-length byte strings, which made
+  secondary indexes on any column possible.
+- `CREATE INDEX`, with the planner choosing index scans.
+- Inner joins, where the planner picks an index nested-loop, hash or
+  nested-loop join for each `JOIN` and pushes `WHERE` conditions down to
+  each table's scan.
+
+**Commits:** `a947f75` (aggregates), `710b52f` (byte-key B+tree), `cc60735`
+(secondary indexes; the benchmark and crash numbers below were produced
+at this commit), and the joins commit after it.
+
+### Numbers
+
+| Number | What it is | Reproduce with |
+|---|---|---|
+| 5.8 µs vs 56 ms | lookup through a secondary index vs a full scan, 1M-row file (median) | `bench/run_storage_bench.sh storage-1m-with-indexes --rows 1000000` |
+| 5.0 s | `CREATE INDEX` over 1M existing rows | same |
+| 1,000 SIGKILL + 10,000 power cuts, 0 corrupted | crash suite with two indexes on the ledger; each check verifies one up-to-date index entry per row | `tools/run_crash_tests.sh crash-with-indexes` |
+| 3 of 3 injected bugs caught | 950, 424 and 383 of 1,000 runs flagged | same → `harness_self_check.txt` |
+| 4 join plans verified | randomized test against plain C++ loops, 40 seeds (15 under ASan) | `for s in $(seq 1 40); do JERRYQL_SEED=$s ./build/jerryql_tests joinRandomized; done` |
+| 71 unit tests + 8 golden SQL scripts | after M4 | `cd build && ctest` |
+
+Leaf fill after the byte-key change: 99.2% sequential vs 69.6% random
+(`./build/jerryql_tests btreeSequential`).
+
+### Candidate resume bullets (M4)
+
+- **Database-focused:** Built a SQL database from scratch in C++ with a B+tree
+  storage engine, secondary indexes and a query planner that chooses
+  between index nested-loop, hash and nested-loop joins; indexed lookups
+  take **5.8 µs** vs **56 ms** for a full scan on **1M** rows.
+- **Crash safety, one line:** Added a write-ahead log with crash recovery; **0**
+  corrupted databases (tables and indexes) across **11,000** injected
+  crashes.
+- **Short:** Built a SQL database in C++ (B+tree, secondary indexes, hash joins,
+  write-ahead log); 0 corruptions in 11,000 injected crashes.
+
+### Interview story (STAR)
+
+- **Situation:** Adding secondary indexes meant indexing columns with
+  repeated values and text, but the B+tree only supported unique 64-bit
+  integer keys.
+- **Task:** Generalize the tree without destabilizing the crash-tested
+  storage layer under it.
+- **Action:**
+  - Switched keys to byte strings compared with `memcmp`. Integers are
+    encoded big-endian with the sign bit flipped, so byte order equals
+    numeric order and table lookups behave exactly as before.
+  - Made index entries `encode(value) + encode(primary key)`, which makes
+    every entry unique, with an encoding that is order-preserving *and*
+    prefix-free (text escapes NUL bytes and ends in a two-byte
+    terminator). Without the prefix-free property, `'ab'` followed by a key
+    could sort after `'ab\0'`, and range scans would silently interleave.
+  - Ran the existing randomized B+tree and crash tests unchanged as a safety
+    net, and added a differential test that compares an indexed database
+    against an unindexed one on identical random workloads.
+- **Result:** Zero test regressions across the refactor; indexes landed with
+  `.check`, an integrity check proving one up-to-date entry per row,
+  verified after every one of 11,000 injected crashes. Lesson: pick the
+  encoding so the comparator stays a plain `memcmp`, and let the
+  properties (order-preserving, prefix-free) carry the correctness argument.

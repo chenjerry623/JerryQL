@@ -1,0 +1,25 @@
+-- Inner joins: index nested loop (primary key and secondary index), hash join, nested loop.
+CREATE TABLE users (id INT PRIMARY KEY, name TEXT, city TEXT);
+CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, amount INT, status TEXT);
+CREATE TABLE cities (name TEXT, country TEXT);
+INSERT INTO users VALUES (1, 'Ada', 'London'), (2, 'Grace', 'New York'), (3, 'Linus', 'Helsinki');
+INSERT INTO orders VALUES (10, 1, 250, 'paid'), (11, 1, 75, 'refunded'), (12, 2, 300, 'paid'), (13, 3, 40, 'paid'), (14, 9, 5, 'paid');
+INSERT INTO cities VALUES ('London', 'UK'), ('Helsinki', 'Finland'), ('New York', 'USA');
+EXPLAIN SELECT u.name, o.amount FROM orders o JOIN users u ON o.user_id = u.id;
+SELECT u.name, o.amount FROM orders o JOIN users u ON o.user_id = u.id ORDER BY o.amount DESC;
+EXPLAIN SELECT u.name, c.country FROM users u JOIN cities c ON c.name = u.city;
+SELECT u.name, c.country FROM users u JOIN cities c ON c.name = u.city;
+SELECT u.name, c.country, o.amount FROM orders o JOIN users u ON u.id = o.user_id JOIN cities c ON c.name = u.city WHERE o.status = 'paid' AND c.country <> 'USA';
+EXPLAIN SELECT u.name, c.country, o.amount FROM orders o JOIN users u ON u.id = o.user_id JOIN cities c ON c.name = u.city WHERE o.status = 'paid' AND c.country <> 'USA';
+SELECT u.name, COUNT(*) AS orders, SUM(o.amount) AS total FROM users u JOIN orders o ON o.user_id = u.id GROUP BY u.name ORDER BY total DESC;
+SELECT a.name, b.name FROM users a JOIN users b ON a.id < b.id;
+EXPLAIN SELECT a.name, b.name FROM users a JOIN users b ON a.id < b.id;
+CREATE INDEX orders_user ON orders (user_id);
+EXPLAIN SELECT u.name, o.amount FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = 1;
+SELECT u.name, o.amount FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = 1;
+SELECT * FROM users u JOIN orders o ON o.user_id = u.id WHERE o.amount > 100;
+SELECT name FROM users JOIN cities ON cities.name = users.city;
+SELECT id FROM users u JOIN orders o ON o.user_id = u.id;
+SELECT * FROM users u LEFT JOIN orders o ON o.user_id = u.id;
+SELECT * FROM users JOIN users ON users.id = users.id;
+SELECT x.name FROM users u JOIN orders o ON o.user_id = u.id;

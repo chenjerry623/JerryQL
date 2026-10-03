@@ -93,6 +93,7 @@ add_executable(jerryql_tests
   tests/test_btree.cpp
   tests/test_wal.cpp
   tests/test_index.cpp
+  tests/test_join.cpp
 )
 target_link_libraries(jerryql_tests PRIVATE jerryql_core)
 add_test(NAME unit_tests COMMAND jerryql_tests)

@@ -234,26 +234,20 @@ QueryResult Database::insert(InsertStmt& stmt) {
 }
 
 QueryResult Database::select(SelectStmt& stmt) {
-    Table& table = catalog_->getTable(stmt.table);
-    OperatorPtr plan = planSelect(stmt, table);
+    std::vector<const Table*> tables = {&catalog_->getTable(stmt.table)};
+    for (const JoinClause& join : stmt.joins) tables.push_back(&catalog_->getTable(join.table));
+    PlannedSelect planned = planSelect(stmt, tables);
 
     QueryResult result;
     result.hasRows = true;
     if (stmt.explain) {
         result.columns = {"QUERY PLAN"};
-        for (const std::string& line : explainPlan(*plan)) result.rows.push_back({Value::text(line)});
+        for (const std::string& line : explainPlan(*planned.plan)) result.rows.push_back({Value::text(line)});
         return result;
     }
-
-    if (stmt.items.empty()) {
-        for (const Column& column : table.schema.columns) result.columns.push_back(column.name);
-    } else {
-        for (const SelectItem& item : stmt.items) {
-            result.columns.push_back(item.alias.empty() ? exprToString(*item.expr) : item.alias);
-        }
-    }
+    result.columns = std::move(planned.columns);
     Tuple tuple;
-    while (plan->next(tuple)) result.rows.push_back(std::move(tuple.row));
+    while (planned.plan->next(tuple)) result.rows.push_back(std::move(tuple.row));
     return result;
 }
 
@@ -269,13 +263,14 @@ QueryResult Database::update(UpdateStmt& stmt) {
         auto index = schema.indexOf(column);
         if (!index) throw SqlError("no such column: " + column);
         if (!assigned.insert(*index).second) throw SqlError("column " + column + " assigned twice");
-        bindColumns(*expr, schema);
+        bindColumns(*expr, scopedSchema(schema, table.name));
         targets.push_back(*index);
     }
 
     std::vector<Tuple> matches;
     OperatorPtr source = planRowSource(table, stmt.where.get());
     for (Tuple tuple; source->next(tuple);) matches.push_back(tuple);
+    source.reset();  // release the cursor's pinned page before writing
 
     // Compute new rows; every right-hand side sees the row's old values.
     std::vector<Tuple> updated;

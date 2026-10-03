@@ -13,12 +13,19 @@ namespace jerryql {
 // applied by a Filter, so this only decides how much of the table is read.
 KeyRange primaryKeyRange(const Expr* where, const Schema& schema);
 
-// Scan (narrowed by primaryKeyRange) plus Filter for the WHERE clause.
-// Binds column names in `where`. Used by SELECT, UPDATE and DELETE.
+// Rows of one table matching `where`: a primary-key lookup or range, an
+// index scan, or a full scan, plus a Filter. Column references may be
+// qualified by the table's name. Binds `where`. Used by UPDATE and DELETE.
 OperatorPtr planRowSource(const Table& table, Expr* where);
 
-// Full SELECT plan: row source -> Sort -> Limit -> Projection.
-// Binds column names in every expression of the statement.
-OperatorPtr planSelect(SelectStmt& stmt, const Table& table);
+struct PlannedSelect {
+    OperatorPtr plan;
+    std::vector<std::string> columns;  // result column names
+};
+
+// Full SELECT plan: FROM/JOIN source (with WHERE) -> Aggregate -> HAVING ->
+// Sort -> Limit -> Projection. `tables` are the FROM table followed by each
+// JOIN's table, in order. Binds every expression of the statement.
+PlannedSelect planSelect(SelectStmt& stmt, const std::vector<const Table*>& tables);
 
 }  // namespace jerryql

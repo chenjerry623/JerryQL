@@ -284,7 +284,7 @@ ORDER BY salary DESC;</textarea>
     </div>
     <div>
       <h3>Scope</h3>
-      <p>INT and TEXT columns, one INT primary key, secondary indexes, transactions, <code>COUNT/SUM/MIN/MAX/AVG</code> with <code>GROUP BY</code> and <code>HAVING</code>. No NULLs or joins yet. Rows are limited to 1,000 bytes.</p>
+      <p>INT and TEXT columns, one INT primary key, secondary indexes, inner joins, transactions, <code>COUNT/SUM/MIN/MAX/AVG</code> with <code>GROUP BY</code> and <code>HAVING</code>. No NULLs or outer joins yet. Rows are limited to 1,000 bytes.</p>
     </div>
   </section>
 </div>
@@ -299,7 +299,10 @@ ORDER BY salary DESC;</textarea>
     "INSERT INTO employees VALUES",
     "  (1, 'Ada', 'Engineering', 185000), (2, 'Grace', 'Engineering', 172000),",
     "  (3, 'Linus', 'Infra', 158000), (4, 'Barbara', 'Research', 191000),",
-    "  (5, 'Ken', 'Infra', 149000), (6, 'Margaret', 'Research', 176000);"
+    "  (5, 'Ken', 'Infra', 149000), (6, 'Margaret', 'Research', 176000);",
+    "CREATE TABLE departments (id INT PRIMARY KEY, name TEXT, building TEXT, budget INT);",
+    "INSERT INTO departments VALUES (1, 'Engineering', 'North', 900000),",
+    "  (2, 'Infra', 'East', 400000), (3, 'Research', 'North', 650000);"
   ].join("\n");
 
   var EXAMPLES = [
@@ -313,6 +316,7 @@ ORDER BY salary DESC;</textarea>
     { label: "Group and count", sql: "SELECT dept, COUNT(*) AS people, SUM(salary) AS payroll, MAX(salary) AS top\nFROM employees\nGROUP BY dept\nORDER BY payroll DESC;" },
     { label: "Revenue by city", sql: "-- Load orders above first.\nSELECT city, COUNT(*) AS orders, SUM(amount) AS revenue, AVG(amount) AS average\nFROM orders\nGROUP BY city\nHAVING COUNT(*) > 100\nORDER BY revenue DESC;" },
     { label: "Query the orders", sql: "-- Load orders above first.\nEXPLAIN SELECT * FROM orders WHERE id >= 5000 AND id < 5010;\nSELECT * FROM orders WHERE id >= 5000 AND id < 5010;\nSELECT customer, amount FROM orders WHERE city = 'Tokyo' AND amount > 99990;" },
+    { label: "Join tables", sql: "EXPLAIN SELECT e.name, d.building FROM employees e JOIN departments d ON d.name = e.dept;\n\nSELECT d.building, COUNT(*) AS people, SUM(e.salary) AS payroll\nFROM employees e JOIN departments d ON d.name = e.dept\nGROUP BY d.building\nORDER BY payroll DESC;" },
     { label: "Add an index", sql: "CREATE INDEX employees_dept ON employees (dept);\nEXPLAIN SELECT name FROM employees WHERE dept = 'Infra';\nSELECT name FROM employees WHERE dept = 'Infra';" },
     { label: "Errors", sql: "INSERT INTO employees VALUES (1, 'Duplicate', 'X', 0);\nSELECT name FROM employees WHERE salary = 'lots';\nSELECT salary / 0 FROM employees;\nSELEC * FROM employees;" },
     { label: "Show schema", sql: ".schema" }
@@ -701,7 +705,7 @@ ORDER BY salary DESC;</textarea>
     engine.ccall("jerryql_reset", null, [], []);
     runScript(SEED_SQL);
     output.textContent = "";
-    appendOutput("-- Data reset: only the employees table remains.\n\n");
+    appendOutput("-- Data reset: back to the employees and departments tables.\n\n");
     ["stat-rows", "stat-size", "stat-time", "stat-rate", "t-lookup", "t-range", "t-scan", "t-group"].forEach(function (id) { $(id).textContent = "–"; });
     $("progress-bar").style.width = "0%";
     ordersLoaded = 0;
@@ -729,7 +733,7 @@ ORDER BY salary DESC;</textarea>
     engine = module;
     runScript(SEED_SQL);
     output.textContent = "";
-    appendOutput("-- Engine loaded with a sample employees table. Try the examples below, or load orders above.\n\n");
+    appendOutput("-- Engine loaded with sample employees and departments tables. Try the examples below, or load orders above.\n\n");
     run();
     setBusy(false);
     openTable("employees", 0);

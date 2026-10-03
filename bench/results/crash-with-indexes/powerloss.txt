@@ -1,0 +1,60 @@
+seed 1
+a full run performs about 1448 file operations
+  200 runs, 0 corrupted
+  400 runs, 0 corrupted
+  600 runs, 0 corrupted
+  800 runs, 0 corrupted
+  1000 runs, 0 corrupted
+  1200 runs, 0 corrupted
+  1400 runs, 0 corrupted
+  1600 runs, 0 corrupted
+  1800 runs, 0 corrupted
+  2000 runs, 0 corrupted
+  2200 runs, 0 corrupted
+  2400 runs, 0 corrupted
+  2600 runs, 0 corrupted
+  2800 runs, 0 corrupted
+  3000 runs, 0 corrupted
+  3200 runs, 0 corrupted
+  3400 runs, 0 corrupted
+  3600 runs, 0 corrupted
+  3800 runs, 0 corrupted
+  4000 runs, 0 corrupted
+  4200 runs, 0 corrupted
+  4400 runs, 0 corrupted
+  4600 runs, 0 corrupted
+  4800 runs, 0 corrupted
+  5000 runs, 0 corrupted
+  5200 runs, 0 corrupted
+  5400 runs, 0 corrupted
+  5600 runs, 0 corrupted
+  5800 runs, 0 corrupted
+  6000 runs, 0 corrupted
+  6200 runs, 0 corrupted
+  6400 runs, 0 corrupted
+  6600 runs, 0 corrupted
+  6800 runs, 0 corrupted
+  7000 runs, 0 corrupted
+  7200 runs, 0 corrupted
+  7400 runs, 0 corrupted
+  7600 runs, 0 corrupted
+  7800 runs, 0 corrupted
+  8000 runs, 0 corrupted
+  8200 runs, 0 corrupted
+  8400 runs, 0 corrupted
+  8600 runs, 0 corrupted
+  8800 runs, 0 corrupted
+  9000 runs, 0 corrupted
+  9200 runs, 0 corrupted
+  9400 runs, 0 corrupted
+  9600 runs, 0 corrupted
+  9800 runs, 0 corrupted
+  10000 runs, 0 corrupted
+power was cut mid-run in 9808 of 10000 runs
+
+mode: powerloss
+10000 runs, 0 corrupted
+distinct acknowledged commits: 533020 (re-checked after every later crash in the same series: 533020 checks)
+commits that survived although the crash came before their acknowledgement: 1496
+runs where recovery replayed log frames: 9560
+log frames replayed: 1159671, uncommitted frames discarded: 5985

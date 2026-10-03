@@ -14,7 +14,7 @@ constexpr int64_t kMax = std::numeric_limits<int64_t>::max();
 
 Schema peopleSchema() {
     Schema schema;
-    schema.columns = {{"id", Type::Int}, {"age", Type::Int}, {"name", Type::Text}};
+    schema.columns = {{"id", Type::Int, ""}, {"age", Type::Int, ""}, {"name", Type::Text, ""}};
     schema.primaryKey = 0;
     return schema;
 }

@@ -19,6 +19,23 @@ std::optional<size_t> Schema::indexOf(const std::string& name) const {
     return std::nullopt;
 }
 
+std::optional<size_t> Schema::resolve(const std::string& qualifier, const std::string& name) const {
+    std::optional<size_t> found;
+    for (size_t i = 0; i < columns.size(); ++i) {
+        if (columns[i].name != name || (!qualifier.empty() && columns[i].qualifier != qualifier)) continue;
+        if (found) throw SqlError("column " + name + " is ambiguous; qualify it, e.g. " +
+                                  columns[*found].qualifier + "." + name);
+        found = i;
+    }
+    return found;
+}
+
+Schema scopedSchema(const Schema& schema, const std::string& qualifier) {
+    Schema scoped = schema;
+    for (Column& column : scoped.columns) column.qualifier = qualifier;
+    return scoped;
+}
+
 Schema schemaFromDefinition(const CreateTableStmt& stmt) {
     Schema schema;
     std::set<std::string> names;
@@ -29,7 +46,7 @@ Schema schemaFromDefinition(const CreateTableStmt& stmt) {
             if (def.type != Type::Int) throw SqlError("PRIMARY KEY column must be INT");
             schema.primaryKey = schema.columns.size();
         }
-        schema.columns.push_back({def.name, def.type});
+        schema.columns.push_back({def.name, def.type, ""});
     }
     return schema;
 }

@@ -117,7 +117,7 @@ private:
                 return {TokenKind::Symbol, op, start};
             }
         }
-        static const std::string oneChar = "(),;*+-/=<>";
+        static const std::string oneChar = "(),;*+-/=<>.";
         char c = sql_[pos_];
         if (oneChar.find(c) == std::string::npos) {
             ++pos_;

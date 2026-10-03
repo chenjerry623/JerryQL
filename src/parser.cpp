@@ -24,7 +24,7 @@ std::string toLower(std::string s) {
 bool isReservedWord(const std::string& word) {
     static const std::set<std::string> reserved = {
         "AND",    "AS",      "ASC",   "BEGIN",   "BY",     "COMMIT", "CREATE", "DELETE", "DESC",  "DROP",
-        "EXPLAIN", "FROM",   "GROUP",  "HAVING", "INDEX",   "INSERT", "INT",    "INTEGER", "INTO",  "KEY",   "LIMIT",
+        "EXPLAIN", "FROM",   "CROSS",  "FULL",   "GROUP",  "HAVING", "INDEX",  "INNER",  "JOIN",   "LEFT",   "OUTER",  "RIGHT",   "INSERT", "INT",    "INTEGER", "INTO",  "KEY",   "LIMIT",
         "NOT",    "OFFSET",  "ON",     "OR",      "ORDER", "PRIMARY", "ROLLBACK", "SELECT", "SET",    "TABLE", "TEXT",
         "TRANSACTION",
         "UPDATE", "VALUES",  "WHERE"};
@@ -277,6 +277,24 @@ SelectStmt Parser::parseSelect() {
     }
     expectKeyword("FROM");
     stmt.table = expectName("table name");
+    stmt.alias = parseOptionalAlias();
+    while (true) {
+        if (isKeyword("LEFT") || isKeyword("RIGHT") || isKeyword("FULL") || isKeyword("OUTER") ||
+            isKeyword("CROSS")) {
+            fail("JOIN (only inner joins are supported)");
+        }
+        bool inner = acceptKeyword("INNER");
+        if (!acceptKeyword("JOIN")) {
+            if (inner) fail("JOIN");
+            break;
+        }
+        JoinClause join;
+        join.table = expectName("table name");
+        join.alias = parseOptionalAlias();
+        expectKeyword("ON");
+        join.on = parseExpr();
+        stmt.joins.push_back(std::move(join));
+    }
     if (acceptKeyword("WHERE")) stmt.where = parseExpr();
     if (acceptKeyword("GROUP")) {
         expectKeyword("BY");
@@ -303,6 +321,13 @@ SelectStmt Parser::parseSelect() {
         if (acceptKeyword("OFFSET")) stmt.offset = expectInteger("a non-negative integer after OFFSET");
     }
     return stmt;
+}
+
+// "AS name", or a bare name, after a table in FROM / JOIN.
+std::string Parser::parseOptionalAlias() {
+    if (acceptKeyword("AS")) return expectName("alias");
+    if (peek().kind == TokenKind::Identifier && !isReservedWord(peek().text)) return expectName("alias");
+    return "";
 }
 
 SelectItem Parser::parseSelectItem() {
@@ -421,7 +446,9 @@ ExprPtr Parser::parsePrimary() {
     }
     if (token.kind == TokenKind::Identifier && !isReservedWord(token.text)) {
         if (peek(1).kind == TokenKind::Symbol && peek(1).text == "(") return parseAggregateCall();
-        return makeColumn(toLower(advance().text));
+        std::string name = toLower(advance().text);
+        if (acceptSymbol(".")) return makeColumn(expectName("column name"), name);  // table.column
+        return makeColumn(name);
     }
     fail("an expression");
 }

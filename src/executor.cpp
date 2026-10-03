@@ -235,13 +235,146 @@ std::string ProjectionOperator::describe() const {
 
 // ---------- EXPLAIN ----------
 
+namespace {
+
+Row concatenate(const Row& left, const Row& right) {
+    Row row;
+    row.reserve(left.size() + right.size());
+    row.insert(row.end(), left.begin(), left.end());
+    row.insert(row.end(), right.begin(), right.end());
+    return row;
+}
+
+bool passes(const Expr* on, const Row& row) {
+    return on == nullptr || isTrue(evaluate(*on, row));
+}
+
+}  // namespace
+
+// ---------- Nested loop join ----------
+
+NestedLoopJoinOperator::NestedLoopJoinOperator(OperatorPtr left, OperatorPtr right, const Expr* on,
+                                               std::string description)
+    : left_(std::move(left)), right_(std::move(right)), on_(on), description_(std::move(description)) {}
+
+bool NestedLoopJoinOperator::next(Tuple& out) {
+    if (!built_) {
+        for (Tuple t; right_->next(t);) rightRows_.push_back(t.row);
+        built_ = true;
+    }
+    while (true) {
+        if (!haveCurrent_ || position_ >= rightRows_.size()) {
+            if (!left_->next(current_)) return false;
+            haveCurrent_ = true;
+            position_ = 0;
+            continue;
+        }
+        Row row = concatenate(current_.row, rightRows_[position_++]);
+        if (passes(on_, row)) {
+            out.key = current_.key;
+            out.row = std::move(row);
+            return true;
+        }
+    }
+}
+
+// ---------- Hash join ----------
+
+HashJoinOperator::HashJoinOperator(OperatorPtr left, OperatorPtr right, const Expr& leftKey,
+                                   size_t rightColumn, const Expr* on, std::string description)
+    : left_(std::move(left)),
+      right_(std::move(right)),
+      leftKey_(leftKey),
+      rightColumn_(rightColumn),
+      on_(on),
+      description_(std::move(description)) {}
+
+// Keys are hashed by their order-preserving encoding, so INT 1 and TEXT '1'
+// never collide into a false match.
+bool HashJoinOperator::next(Tuple& out) {
+    if (!built_) {
+        for (Tuple t; right_->next(t);) {
+            buckets_[encodeValueKey(t.row[rightColumn_])].push_back(t.row);
+        }
+        built_ = true;
+    }
+    while (true) {
+        if (!matches_ || position_ >= matches_->size()) {
+            if (!left_->next(current_)) return false;
+            auto it = buckets_.find(encodeValueKey(evaluate(leftKey_, current_.row)));
+            matches_ = it == buckets_.end() ? nullptr : &it->second;
+            position_ = 0;
+            continue;
+        }
+        Row row = concatenate(current_.row, (*matches_)[position_++]);
+        if (passes(on_, row)) {
+            out.key = current_.key;
+            out.row = std::move(row);
+            return true;
+        }
+    }
+}
+
+// ---------- Index nested loop join ----------
+
+IndexNestedLoopJoinOperator::IndexNestedLoopJoinOperator(OperatorPtr left, const TableStore& rightStore,
+                                                         BTree* index, const Expr& leftKey,
+                                                         const Expr* on, std::string description)
+    : left_(std::move(left)),
+      rightStore_(rightStore),
+      index_(index),
+      leftKey_(leftKey),
+      on_(on),
+      description_(std::move(description)) {}
+
+void IndexNestedLoopJoinOperator::lookUp(const Value& key) {
+    matches_.clear();
+    position_ = 0;
+    if (index_ == nullptr) {
+        if (!key.isInt()) return;  // a TEXT value never equals an INT primary key
+        if (std::optional<Row> row = rightStore_.get(key.asInt())) matches_.push_back(std::move(*row));
+        return;
+    }
+    BTreeCursor cursor = index_->scan(indexLowerBound(key, true), indexUpperBound(key, true));
+    std::string_view entry, payload;
+    while (cursor.nextRaw(entry, payload)) {
+        std::optional<Row> row = rightStore_.get(primaryKeyOfEntry(entry));
+        if (!row) throw std::logic_error("index entry points to a missing row");
+        matches_.push_back(std::move(*row));
+    }
+}
+
+bool IndexNestedLoopJoinOperator::next(Tuple& out) {
+    while (true) {
+        if (position_ >= matches_.size()) {
+            if (!left_->next(current_)) return false;
+            lookUp(evaluate(leftKey_, current_.row));
+            continue;
+        }
+        Row row = concatenate(current_.row, matches_[position_++]);
+        if (passes(on_, row)) {
+            out.key = current_.key;
+            out.row = std::move(row);
+            return true;
+        }
+    }
+}
+
+// ---------- EXPLAIN ----------
+
+namespace {
+
+void explainNode(const Operator& op, const std::string& indent, std::vector<std::string>& lines) {
+    lines.push_back(indent + (indent.empty() ? "" : "-> ") + op.describe());
+    if (op.child()) explainNode(*op.child(), indent + "  ", lines);
+    if (op.secondChild()) explainNode(*op.secondChild(), indent + "  ", lines);
+}
+
+}  // namespace
+
 std::vector<std::string> explainPlan(const Operator& root) {
     std::vector<std::string> lines;
-    std::string indent;
-    for (const Operator* op = &root; op != nullptr; op = op->child()) {
-        lines.push_back(indent + (indent.empty() ? "" : "-> ") + op->describe());
-        indent += "  ";
-    }
+    explainNode(root, "", lines);
     return lines;
 }
 

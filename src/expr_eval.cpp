@@ -12,8 +12,8 @@ void bindColumns(Expr& expr, const Schema& schema) {
                        " is only allowed in SELECT, HAVING and ORDER BY");
     }
     if (expr.kind == ExprKind::Column) {
-        auto index = schema.indexOf(expr.column);
-        if (!index) throw SqlError("no such column: " + expr.column);
+        auto index = schema.resolve(expr.table, expr.column);
+        if (!index) throw SqlError("no such column: " + exprToString(expr));
         expr.columnIndex = index;
     }
     if (expr.left) bindColumns(*expr.left, schema);

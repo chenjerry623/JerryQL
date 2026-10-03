@@ -1,0 +1,28 @@
+seed 1
+  50 runs, 0 corrupted, 5229 commits acknowledged in this series
+  100 runs, 0 corrupted, 3887 commits acknowledged in this series
+  150 runs, 0 corrupted, 4346 commits acknowledged in this series
+  200 runs, 0 corrupted, 4139 commits acknowledged in this series
+  250 runs, 0 corrupted, 3109 commits acknowledged in this series
+  300 runs, 0 corrupted, 4875 commits acknowledged in this series
+  350 runs, 0 corrupted, 3690 commits acknowledged in this series
+  400 runs, 0 corrupted, 3633 commits acknowledged in this series
+  450 runs, 0 corrupted, 3832 commits acknowledged in this series
+  500 runs, 0 corrupted, 3764 commits acknowledged in this series
+  550 runs, 0 corrupted, 3833 commits acknowledged in this series
+  600 runs, 0 corrupted, 4290 commits acknowledged in this series
+  650 runs, 0 corrupted, 3489 commits acknowledged in this series
+  700 runs, 0 corrupted, 5041 commits acknowledged in this series
+  750 runs, 0 corrupted, 2353 commits acknowledged in this series
+  800 runs, 0 corrupted, 4931 commits acknowledged in this series
+  850 runs, 0 corrupted, 4063 commits acknowledged in this series
+  900 runs, 0 corrupted, 4070 commits acknowledged in this series
+  950 runs, 0 corrupted, 4877 commits acknowledged in this series
+  1000 runs, 0 corrupted, 3109 commits acknowledged in this series
+
+mode: kill
+1000 runs, 0 corrupted
+distinct acknowledged commits: 162471 (re-checked after every later crash in the same series: 2166278 checks)
+commits that survived although the crash came before their acknowledgement: 561
+runs where recovery replayed log frames: 883
+log frames replayed: 103702, uncommitted frames discarded: 737

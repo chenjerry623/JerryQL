@@ -26,6 +26,7 @@ struct Expr {
     ExprKind kind = ExprKind::Literal;
     Value value;                         // Literal
     std::string column;                  // Column: name as written (lowercased)
+    std::string table;                   // Column: qualifier in "t.col", or empty
     std::optional<size_t> columnIndex;   // Column: set by bindColumns()
     UnaryOp unaryOp = UnaryOp::Negate;   // Unary
     BinaryOp binaryOp = BinaryOp::Add;   // Binary
@@ -36,7 +37,7 @@ struct Expr {
 };
 
 ExprPtr makeLiteral(Value value);
-ExprPtr makeColumn(std::string name);
+ExprPtr makeColumn(std::string name, std::string table = "");
 ExprPtr makeUnary(UnaryOp op, ExprPtr operand);
 ExprPtr makeBinary(BinaryOp op, ExprPtr left, ExprPtr right);
 ExprPtr makeAggregate(AggregateFunc func, ExprPtr argument);  // null argument = COUNT(*)
@@ -93,16 +94,25 @@ struct OrderItem {
     bool descending = false;
 };
 
+struct JoinClause {
+    std::string table;
+    std::string alias;  // empty = the table name
+    ExprPtr on;
+};
+
 struct SelectStmt {
     bool explain = false;
     std::vector<SelectItem> items;  // empty = SELECT *
     std::string table;
+    std::string alias;              // empty = the table name
+    std::vector<JoinClause> joins;  // inner joins, in order
     ExprPtr where;                  // may be null
     std::vector<ExprPtr> groupBy;
     ExprPtr having;                 // may be null
     std::vector<OrderItem> orderBy;
     std::optional<int64_t> limit;
     int64_t offset = 0;             // rows to skip before LIMIT applies
+    std::vector<ExprPtr> derived;   // expressions the planner creates; live as long as the plan
 };
 
 struct UpdateStmt {

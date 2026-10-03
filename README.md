@@ -70,6 +70,9 @@ jerryql> EXPLAIN SELECT name FROM employees WHERE id >= 2 AND id < 5;
 - Transactions: `BEGIN` / `COMMIT` / `ROLLBACK`. Outside a transaction,
   each write statement commits on its own.
 
+- Inner joins: `FROM a [AS] x JOIN b y ON ... [JOIN ...]`, with qualified
+  columns (`x.id`). The planner chooses an index nested-loop join, a hash
+  join or a nested-loop join (see below).
 - Secondary indexes: `CREATE INDEX name ON table (column)`, `DROP INDEX`.
   The planner uses them for `=`, `<`, `<=`, `>`, `>=` and ranges, and
   `EXPLAIN` shows which one it picked.
@@ -77,7 +80,7 @@ jerryql> EXPLAIN SELECT name FROM employees WHERE id >= 2 AND id < 5;
   result), with `GROUP BY` on any expressions, `HAVING`, and `ORDER BY` on
   aggregates or aliases. `LIMIT n OFFSET m`.
 
-**Not supported (yet):** NULL, joins, subqueries,
+**Not supported (yet):** NULL, outer joins, subqueries,
 secondary indexes, concurrent connections.
 
 Tables live in a single database file (`./build/jerryql --db app.db`), or in
@@ -98,7 +101,7 @@ SQL text -> Lexer -> Parser -> AST -> Planner -> Operator tree -> Executor
 | Lexer | `src/lexer.cpp` | Bad input becomes an error token, so one bad statement doesn't abort a whole script. |
 | Parser | `src/parser.cpp` | Hand-written recursive descent, one function per precedence level (`OR` < `AND` < `NOT` < comparison < `+ -` < `* /` < unary). Recovers at the next `;` after a syntax error. |
 | Planner | `src/planner.cpp` | Extracts a primary-key range from top-level `AND`ed comparisons such as `id >= 10 AND id < 20`, giving a point lookup, range scan or full scan. Detects contradictions like `id > 5 AND id < 3`. The full `WHERE` is still applied by a filter, so the range only limits how much is read. |
-| Executor | `src/executor.cpp` | Volcano-style operators (`Scan`, `Filter`, `Aggregate`, `Sort`, `Limit`, `Projection`), each with `next()`. Column names are resolved to indexes once at plan time, not per row. |
+| Executor | `src/executor.cpp` | Volcano-style operators (`Scan`, `IndexScan`, `Filter`, three joins, `Aggregate`, `Sort`, `Limit`, `Projection`), each with `next()`. Column names are resolved to indexes once at plan time, not per row. |
 | Browser build | `web/` | The same engine compiled with Emscripten behind a three-function C API (`jerryql_run`, `jerryql_reset`, `jerryql_free`). CI checks its output matches the native build byte for byte. |
 | Storage interface | `src/table_store.h` | Rows keyed by a 64-bit integer: the primary key, or a hidden row id. Ordered range scans. |
 | B+tree | `src/storage/btree.cpp` | Byte-string keys. One tree per table, rows stored in the leaves (a clustered table, like SQLite's rowid tables), plus one per secondary index. |
@@ -240,6 +243,47 @@ Contradictory ranges (`x > 5 AND x < 3`) produce an empty scan.
 - No index-only scans; every match fetches its row.
 - No `ORDER BY` via index order.
 
+## Joins
+
+Joins are planned left-deep in `FROM` order. For each `JOIN`, the planner
+looks in `ON` for an equality between a column of the new (right) table and
+an expression over the tables already joined. It then picks the first of
+these that applies:
+
+| Algorithm | When | Cost |
+|---|---|---|
+| Index nested loop, by primary key | the right column is its table's primary key | one B+tree lookup per left row |
+| Index nested loop, by secondary index | the right column has an index | one index range scan plus row lookups per left row |
+| Hash join | any other equality | builds a hash table of the right table once, then probes it per left row |
+| Nested loop | no usable equality (e.g. `a.x < b.y`) | reads the right table once, then compares every pair |
+
+```
+jerryql> EXPLAIN SELECT u.name, c.country, o.amount FROM orders o
+           JOIN users u ON u.id = o.user_id JOIN cities c ON c.name = u.city
+           WHERE o.status = 'paid' AND c.country <> 'USA';
+| PROJECT u.name, c.country, o.amount                                    |
+|   -> FILTER (o.status = 'paid') AND (c.country <> 'USA')               |
+|     -> HASH JOIN c ON (c.name = u.city)                                |
+|       -> INDEX NESTED LOOP JOIN u USING PRIMARY KEY (u.id = o.user_id) |
+|         -> FILTER o.status = 'paid'                                    |
+|           -> SEQ SCAN orders                                           |
+|       -> FILTER c.country <> 'USA'                                     |
+|         -> SEQ SCAN cities                                             |
+```
+
+- **Predicate pushdown:** `WHERE` conditions that read a single table are
+  copied into that table's scan, where they can use its primary key or
+  indexes and cut rows early. The full `WHERE` is applied again after the
+  joins, which is simple and always correct.
+- **Hash keys:** values are hashed by their order-preserving encoding, so
+  `INT 1` never matches `TEXT '1'`.
+- **Not done:** join reordering (no cost-based optimizer; the `FROM` order is
+  the join order), outer joins, and spilling large hash tables to disk.
+- **Testing:** a randomized test builds random tables, runs join queries
+  that hit all four algorithms, and compares against results computed with
+  plain C++ loops. An index on the join column is created and dropped
+  between queries.
+
 ## Write-ahead log and crash recovery
 
 Redo-only, full-page-image logging, close to SQLite's WAL mode.
@@ -332,13 +376,17 @@ It has two modes:
   a random file operation, and each unsynced write is then kept, lost or
   torn at a 512-byte boundary.
 
-Results, from `tools/run_crash_tests.sh` (raw output in
-[`bench/results/m2-cloud-container/`](bench/results/m2-cloud-container/)):
+Results, from `tools/run_crash_tests.sh crash-with-indexes`:
 
 | Mode | Crashes | Corrupted | Acknowledged commits, all present after recovery | Runs where recovery replayed log frames |
 |---|---:|---:|---:|---:|
-| SIGKILL, real files on ext4 | 1,000 | 0 | 192,400 | 923 |
-| Simulated power loss | 10,000 | 0 | 539,715 | 9,668 |
+| SIGKILL, real files on ext4 | 1,000 | 0 | 162,471 | 883 |
+| Simulated power loss | 10,000 | 0 | 533,020 | 9,560 |
+
+These runs include two secondary indexes on the ledger. Every check
+confirms that each index holds exactly one up-to-date entry per row. Raw
+output is in [`bench/results/crash-with-indexes/`](bench/results/crash-with-indexes/).
+The earlier run, before indexes existed, is in `m2-cloud-container/`.
 
 **Checking the harness can fail.** `tools/check_harness.sh` builds three
 deliberately broken engines and runs the power-loss mode against each:
@@ -346,9 +394,9 @@ deliberately broken engines and runs the power-loss mode against each:
 | Engine variant | Corrupted runs (of 1,000) |
 |---|---:|
 | Correct engine | 0 |
-| Commit doesn't fsync the log | 938 |
-| Checkpoint doesn't fsync the database file before resetting the log | 248 |
-| Recovery treats every valid frame as committed | 310 |
+| Commit doesn't fsync the log | 950 |
+| Checkpoint doesn't fsync the database file before resetting the log | 424 |
+| Recovery treats every valid frame as committed | 383 |
 
 The second bug is the kind SIGKILL testing can never find.
 
@@ -359,9 +407,12 @@ and execution, on a 1,000,000-row database file (88 MB) with a 4 MiB buffer pool
 
 | Query | Median | p95 |
 |---|---:|---:|
-| Point lookup by primary key | 3.5 µs | 4.7 µs |
-| Range scan by primary key, 100 rows | 23.3 µs | 38.1 µs |
-| Same point lookup on an unindexed column (full scan) | 53 ms | 68 ms |
+| Point lookup by primary key | 3.6 µs | 6.3 µs |
+| Range scan by primary key, 100 rows | 23.5 µs | 30.0 µs |
+| Point lookup on a column with a secondary index | 5.8 µs | 7.8 µs |
+| Same lookup on an unindexed column (full scan) | 56 ms | 72 ms |
+
+`CREATE INDEX` over the 1M rows took 5.0 s.
 
 - **Machine:** a cloud VM with 4 vCPUs (Intel Xeon @ 2.10 GHz), Linux 6.18,
   GCC 13.3 at `-O3`.
@@ -371,7 +422,7 @@ and execution, on a 1,000,000-row database file (88 MB) with a 4 MiB buffer pool
   That run starts with an empty buffer pool but a warm OS page cache.
 - **Reproduce:** `bench/run_storage_bench.sh <name> --rows 1000000`. Raw
   per-query latencies and machine details are in
-  [`bench/results/storage-1m-after-scan-speedup/`](bench/results/storage-1m-after-scan-speedup/).
+  [`bench/results/storage-1m-with-indexes/`](bench/results/storage-1m-with-indexes/).
   The original M1 run, before the scan speedup (full scan 185 ms), is in
   [`m1-cloud-container/`](bench/results/m1-cloud-container/).
 
@@ -469,7 +520,8 @@ disk. The ratios are more meaningful than the absolute numbers.
 6. ~~Profile and speed up full scans~~ (done: 4.9× → 1.2× SQLite's time)
 7. ~~Aggregates and `GROUP BY`~~ (done)
 8. ~~Secondary indexes~~ (done)
-9. Joins
+9. ~~Inner joins: index nested loop, hash, nested loop~~ (done)
+10. Next ideas: cost-based join ordering, NULL, overflow pages for large rows, page checksums
 
 ## References
 

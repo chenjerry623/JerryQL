@@ -18,6 +18,7 @@ namespace jerryql {
 struct Column {
     std::string name;
     Type type;
+    std::string qualifier;  // table name or alias, in a query's scope; empty in the catalog
 };
 
 struct Schema {
@@ -25,7 +26,13 @@ struct Schema {
     std::optional<size_t> primaryKey;  // index into columns; must be an INT column
 
     std::optional<size_t> indexOf(const std::string& name) const;
+    // Resolves "qualifier.name" or a bare "name" in a query. Throws SqlError
+    // if a bare name matches columns of more than one table.
+    std::optional<size_t> resolve(const std::string& qualifier, const std::string& name) const;
 };
+
+// A table's schema with every column qualified by `qualifier` (alias or name).
+Schema scopedSchema(const Schema& schema, const std::string& qualifier);
 
 // Validates a CREATE TABLE definition and builds its schema. Throws SqlError.
 Schema schemaFromDefinition(const CreateTableStmt& stmt);
