@@ -151,19 +151,23 @@ public:
     uint64_t bytesOnDisk() const override { return fileSize(path_) + fileSize(path_ + "-wal"); }
 
 private:
-    // Copies every column of every row out, as JerryQL does into its results.
+    // Copies every row into the same Row-of-Values type JerryQL returns, so
+    // both engines pay identical result-building costs (integers stay
+    // integers; text is copied once).
     static size_t materialize(sqlite3_stmt* stmt) {
         size_t rows = 0;
-        std::vector<std::string> row;
+        jerryql::Row row;
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             int columns = sqlite3_column_count(stmt);
             row.clear();
             for (int c = 0; c < columns; ++c) {
                 if (sqlite3_column_type(stmt, c) == SQLITE_INTEGER) {
-                    row.push_back(std::to_string(sqlite3_column_int64(stmt, c)));
+                    row.push_back(jerryql::Value::integer(sqlite3_column_int64(stmt, c)));
                 } else {
                     const unsigned char* text = sqlite3_column_text(stmt, c);
-                    row.emplace_back(text ? reinterpret_cast<const char*>(text) : "");
+                    int length = sqlite3_column_bytes(stmt, c);
+                    row.push_back(jerryql::Value::text(
+                        std::string(reinterpret_cast<const char*>(text ? text : reinterpret_cast<const unsigned char*>("")), size_t(length))));
                 }
             }
             ++rows;
