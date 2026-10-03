@@ -6,3 +6,4 @@ build*/
 web/jerryql.js
 web/jerryql.wasm
 site/
+build-bench/

@@ -67,6 +67,9 @@ endif()
 add_executable(jerryql src/main.cpp)
 target_link_libraries(jerryql PRIVATE jerryql_core)
 
+add_executable(jerryql_bench bench/bench_storage.cpp)
+target_link_libraries(jerryql_bench PRIVATE jerryql_core)
+
 enable_testing()
 
 add_executable(jerryql_tests
