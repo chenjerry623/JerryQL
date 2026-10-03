@@ -98,5 +98,5 @@ jerryql> SELECT name FROM employees WHERE salary = 'lots';
 Error: cannot compare INT with TEXT
 
 jerryql> SELEC * FROM employees;
-Error: syntax error at position 1203: expected a statement (CREATE, DROP, INSERT, SELECT, EXPLAIN, UPDATE, DELETE) but found 'SELEC'
+Error: syntax error at position 1203: expected a statement (CREATE, DROP, INSERT, SELECT, EXPLAIN, UPDATE, DELETE, BEGIN, COMMIT, ROLLBACK) but found 'SELEC'
 

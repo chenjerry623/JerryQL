@@ -62,6 +62,7 @@ private:
     SelectItem parseSelectItem();
     UpdateStmt parseUpdate();
     DeleteStmt parseDelete();
+    TransactionStmt parseTransaction();
 
     // Expressions, lowest to highest precedence
     ExprPtr parseExpr();

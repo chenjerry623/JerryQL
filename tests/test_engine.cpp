@@ -164,7 +164,8 @@ TEST(scriptRunnerContinuesAfterErrors) {
              std::string("CREATE TABLE\n"
                          "Error: column a expects INT but got TEXT 'x'\n"
                          "Error: syntax error at position 52: expected a statement (CREATE, DROP, "
-                         "INSERT, SELECT, EXPLAIN, UPDATE, DELETE) but found 'SELEC'\n"
+                         "INSERT, SELECT, EXPLAIN, UPDATE, DELETE, BEGIN, COMMIT, ROLLBACK) but "
+                         "found 'SELEC'\n"
                          "INSERT 1\n"
                          "+---+\n| a |\n+---+\n| 1 |\n+---+\n(1 row)\n"));
 }

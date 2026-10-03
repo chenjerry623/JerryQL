@@ -30,6 +30,7 @@ add_library(jerryql_core
   src/storage/file.cpp
   src/storage/pager.cpp
   src/storage/row_codec.cpp
+  src/storage/wal.cpp
   src/value.cpp
 )
 target_include_directories(jerryql_core PUBLIC src)
@@ -70,6 +71,9 @@ target_link_libraries(jerryql PRIVATE jerryql_core)
 add_executable(jerryql_bench bench/bench_storage.cpp)
 target_link_libraries(jerryql_bench PRIVATE jerryql_core)
 
+add_executable(jerryql_crashtest tools/crash_test.cpp tools/bank_workload.cpp)
+target_link_libraries(jerryql_crashtest PRIVATE jerryql_core)
+
 enable_testing()
 
 add_executable(jerryql_tests
@@ -79,6 +83,7 @@ add_executable(jerryql_tests
   tests/test_planner.cpp
   tests/test_engine.cpp
   tests/test_btree.cpp
+  tests/test_wal.cpp
 )
 target_link_libraries(jerryql_tests PRIVATE jerryql_core)
 add_test(NAME unit_tests COMMAND jerryql_tests)

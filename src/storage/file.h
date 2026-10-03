@@ -18,6 +18,7 @@ public:
     virtual void read(uint64_t offset, char* out, size_t n) = 0;
     virtual void write(uint64_t offset, const char* data, size_t n) = 0;
     virtual uint64_t size() const = 0;
+    virtual void truncate(uint64_t size) = 0;
     // Durably persists everything written so far (fsync for real files).
     virtual void sync() = 0;
 };
@@ -27,7 +28,11 @@ public:
     void read(uint64_t offset, char* out, size_t n) override;
     void write(uint64_t offset, const char* data, size_t n) override;
     uint64_t size() const override { return bytes_.size(); }
+    void truncate(uint64_t size) override { bytes_.resize(size); }
     void sync() override {}
+
+    const std::vector<char>& bytes() const { return bytes_; }
+    std::vector<char>& bytes() { return bytes_; }
 
 private:
     std::vector<char> bytes_;
@@ -44,11 +49,16 @@ public:
     void read(uint64_t offset, char* out, size_t n) override;
     void write(uint64_t offset, const char* data, size_t n) override;
     uint64_t size() const override;
+    void truncate(uint64_t size) override;
     void sync() override;
 
 private:
     std::string path_;
     int fd_ = -1;
 };
+
+// fsyncs a directory, so a file just created in it survives a crash.
+void syncDirectoryOf(const std::string& filePath);
+bool fileExists(const std::string& path);
 
 }  // namespace jerryql

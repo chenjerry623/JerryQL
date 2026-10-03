@@ -23,9 +23,10 @@ std::string toLower(std::string s) {
 
 bool isReservedWord(const std::string& word) {
     static const std::set<std::string> reserved = {
-        "AND",    "AS",      "ASC",   "BY",      "CREATE", "DELETE", "DESC",  "DROP",
+        "AND",    "AS",      "ASC",   "BEGIN",   "BY",     "COMMIT", "CREATE", "DELETE", "DESC",  "DROP",
         "EXPLAIN", "FROM",   "INSERT", "INT",    "INTEGER", "INTO",  "KEY",   "LIMIT",
-        "NOT",    "OR",      "ORDER", "PRIMARY", "SELECT", "SET",    "TABLE", "TEXT",
+        "NOT",    "OR",      "ORDER", "PRIMARY", "ROLLBACK", "SELECT", "SET",    "TABLE", "TEXT",
+        "TRANSACTION",
         "UPDATE", "VALUES",  "WHERE"};
     return reserved.count(toUpper(word)) > 0;
 }
@@ -161,7 +162,22 @@ Statement Parser::parseStatement() {
     if (isKeyword("SELECT") || isKeyword("EXPLAIN")) return parseSelect();
     if (isKeyword("UPDATE")) return parseUpdate();
     if (isKeyword("DELETE")) return parseDelete();
-    fail("a statement (CREATE, DROP, INSERT, SELECT, EXPLAIN, UPDATE, DELETE)");
+    if (isKeyword("BEGIN") || isKeyword("COMMIT") || isKeyword("ROLLBACK")) return parseTransaction();
+    fail("a statement (CREATE, DROP, INSERT, SELECT, EXPLAIN, UPDATE, DELETE, BEGIN, COMMIT, ROLLBACK)");
+}
+
+TransactionStmt Parser::parseTransaction() {
+    TransactionStmt stmt;
+    if (acceptKeyword("BEGIN")) {
+        stmt.action = TransactionAction::Begin;
+    } else if (acceptKeyword("COMMIT")) {
+        stmt.action = TransactionAction::Commit;
+    } else {
+        expectKeyword("ROLLBACK");
+        stmt.action = TransactionAction::Rollback;
+    }
+    acceptKeyword("TRANSACTION");
+    return stmt;
 }
 
 CreateTableStmt Parser::parseCreateTable() {

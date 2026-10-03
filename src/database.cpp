@@ -68,22 +68,51 @@ std::vector<size_t> insertColumnOrder(const InsertStmt& stmt, const Schema& sche
 }  // namespace
 
 Database::Database(DatabaseOptions options)
-    : pager_(std::make_unique<Pager>(std::make_unique<MemoryFile>(), options.bufferPoolPages)),
-      catalog_(*pager_) {}
+    : Database(std::make_unique<MemoryFile>(), std::make_unique<MemoryFile>(), options) {}
+
+namespace {
+
+std::unique_ptr<File> openWalFile(const std::string& dbPath) {
+    std::string walPath = dbPath + "-wal";
+    bool existed = fileExists(walPath);
+    auto file = std::make_unique<PosixFile>(walPath);
+    if (!existed) syncDirectoryOf(walPath);  // make the new file's name durable
+    return file;
+}
+
+std::unique_ptr<File> openDbFile(const std::string& path) {
+    bool existed = fileExists(path);
+    auto file = std::make_unique<PosixFile>(path);
+    if (!existed) syncDirectoryOf(path);
+    return file;
+}
+
+}  // namespace
 
 Database::Database(const std::string& path, DatabaseOptions options)
-    : pager_(std::make_unique<Pager>(std::make_unique<PosixFile>(path), options.bufferPoolPages)),
-      catalog_(*pager_) {
-    pager_->flush();  // a new file gets its header and schema tree right away
+    : Database(openDbFile(path), openWalFile(path), options) {}
+
+Database::Database(std::unique_ptr<File> dbFile, std::unique_ptr<File> walFile,
+                   DatabaseOptions options)
+    : pager_(std::make_unique<Pager>(std::move(dbFile), std::move(walFile), options)),
+      catalog_(std::make_unique<Catalog>(*pager_)) {
+    pager_->commit();  // a new database gets its header and schema tree right away
 }
 
 Database::~Database() {
     if (!pager_) return;  // moved from
     try {
-        pager_->flush();
+        if (inTransaction_) pager_->rollback();
+        pager_->checkpoint();
     } catch (const std::exception&) {
-        // Destructors must not throw; every write statement already flushed.
+        // Destructors must not throw. Committed work is already in the log.
     }
+}
+
+void Database::rollbackAndReload() {
+    pager_->rollback();
+    catalog_ = std::make_unique<Catalog>(*pager_);  // table list may have changed
+    inTransaction_ = false;
 }
 
 QueryResult Database::execute(const std::string& sql) {
@@ -93,36 +122,77 @@ QueryResult Database::execute(const std::string& sql) {
 
 QueryResult Database::execute(Statement& statement) {
     if (auto* s = std::get_if<SelectStmt>(&statement)) return select(*s);
+    if (auto* s = std::get_if<TransactionStmt>(&statement)) return transaction(*s);
+    return runWrite(statement);
+}
+
+// Validation errors (SqlError) are raised before a statement writes anything.
+// Any other exception may leave a statement half-applied, so the whole
+// transaction is rolled back.
+QueryResult Database::runWrite(Statement& statement) {
     QueryResult result;
-    if (auto* s = std::get_if<CreateTableStmt>(&statement)) {
-        result = createTable(*s);
-    } else if (auto* s = std::get_if<DropTableStmt>(&statement)) {
-        result = dropTable(*s);
-    } else if (auto* s = std::get_if<InsertStmt>(&statement)) {
-        result = insert(*s);
-    } else if (auto* s = std::get_if<UpdateStmt>(&statement)) {
-        result = update(*s);
-    } else {
-        result = remove(std::get<DeleteStmt>(statement));
+    try {
+        if (auto* s = std::get_if<CreateTableStmt>(&statement)) {
+            result = createTable(*s);
+        } else if (auto* s = std::get_if<DropTableStmt>(&statement)) {
+            result = dropTable(*s);
+        } else if (auto* s = std::get_if<InsertStmt>(&statement)) {
+            result = insert(*s);
+        } else if (auto* s = std::get_if<UpdateStmt>(&statement)) {
+            result = update(*s);
+        } else {
+            result = remove(std::get<DeleteStmt>(statement));
+        }
+        if (!inTransaction_) pager_->commit();
+    } catch (const SqlError&) {
+        throw;
+    } catch (const std::exception& e) {
+        bool wasInTransaction = inTransaction_;
+        rollbackAndReload();
+        throw SqlError(std::string(e.what()) +
+                       (wasInTransaction ? " (transaction rolled back)" : " (statement rolled back)"));
     }
-    pager_->flush();
     return result;
 }
 
+QueryResult Database::transaction(const TransactionStmt& stmt) {
+    switch (stmt.action) {
+        case TransactionAction::Begin:
+            if (inTransaction_) throw SqlError("a transaction is already open");
+            inTransaction_ = true;
+            return messageResult("BEGIN");
+        case TransactionAction::Commit:
+            if (!inTransaction_) throw SqlError("no transaction is open");
+            try {
+                pager_->commit();
+            } catch (const std::exception& e) {
+                rollbackAndReload();
+                throw SqlError(std::string("commit failed: ") + e.what() + " (transaction rolled back)");
+            }
+            inTransaction_ = false;
+            return messageResult("COMMIT");
+        case TransactionAction::Rollback:
+            if (!inTransaction_) throw SqlError("no transaction is open");
+            rollbackAndReload();
+            return messageResult("ROLLBACK");
+    }
+    throw SqlError("unknown transaction statement");
+}
+
 QueryResult Database::createTable(const CreateTableStmt& stmt) {
-    catalog_.createTable(stmt.table, schemaFromDefinition(stmt));
+    catalog_->createTable(stmt.table, schemaFromDefinition(stmt));
     return messageResult("CREATE TABLE");
 }
 
 QueryResult Database::dropTable(const DropTableStmt& stmt) {
-    if (!catalog_.dropTable(stmt.table)) throw SqlError("no such table: " + stmt.table);
+    if (!catalog_->dropTable(stmt.table)) throw SqlError("no such table: " + stmt.table);
     return messageResult("DROP TABLE");
 }
 
 // Validates every row (types, duplicate keys) before inserting any, so a
 // failing multi-row INSERT leaves the table unchanged.
 QueryResult Database::insert(InsertStmt& stmt) {
-    Table& table = catalog_.getTable(stmt.table);
+    Table& table = catalog_->getTable(stmt.table);
     const Schema& schema = table.schema;
     std::vector<size_t> order = insertColumnOrder(stmt, schema);
     const size_t expectedValues = stmt.columns.empty() ? schema.columns.size() : stmt.columns.size();
@@ -157,7 +227,7 @@ QueryResult Database::insert(InsertStmt& stmt) {
 }
 
 QueryResult Database::select(SelectStmt& stmt) {
-    Table& table = catalog_.getTable(stmt.table);
+    Table& table = catalog_->getTable(stmt.table);
     OperatorPtr plan = planSelect(stmt, table);
 
     QueryResult result;
@@ -183,7 +253,7 @@ QueryResult Database::select(SelectStmt& stmt) {
 // Reads every matching row before writing any. Updating while scanning could
 // revisit a row whose key moved forward (the "Halloween problem").
 QueryResult Database::update(UpdateStmt& stmt) {
-    Table& table = catalog_.getTable(stmt.table);
+    Table& table = catalog_->getTable(stmt.table);
     const Schema& schema = table.schema;
 
     std::vector<size_t> targets;
@@ -238,7 +308,7 @@ QueryResult Database::update(UpdateStmt& stmt) {
 }
 
 QueryResult Database::remove(DeleteStmt& stmt) {
-    Table& table = catalog_.getTable(stmt.table);
+    Table& table = catalog_->getTable(stmt.table);
     std::vector<int64_t> keys;
     OperatorPtr source = planRowSource(table, stmt.where.get());
     for (Tuple tuple; source->next(tuple);) keys.push_back(tuple.key);

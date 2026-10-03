@@ -54,7 +54,7 @@ std::string Table::toCreateSql() const {
 
 Catalog::Catalog(Pager& pager)
     : pager_(pager), schemaTree_(pager, Pager::kSchemaRootPage) {
-    if (pager.isNew()) {
+    if (pager.pageCount() < 2) {  // only the header page exists: a brand-new database
         if (BTree::create(pager) != Pager::kSchemaRootPage) {
             throw std::logic_error("schema tree must be page 1");
         }

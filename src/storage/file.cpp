@@ -78,8 +78,27 @@ uint64_t PosixFile::size() const {
     return static_cast<uint64_t>(info.st_size);
 }
 
+void PosixFile::truncate(uint64_t size) {
+    if (::ftruncate(fd_, static_cast<off_t>(size)) != 0) throwErrno("truncate failed on", path_);
+}
+
 void PosixFile::sync() {
     if (::fsync(fd_) != 0) throwErrno("fsync failed on", path_);
+}
+
+void syncDirectoryOf(const std::string& filePath) {
+    size_t slash = filePath.find_last_of('/');
+    std::string dir = slash == std::string::npos ? "." : (slash == 0 ? "/" : filePath.substr(0, slash));
+    int fd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY);
+    if (fd < 0) throwErrno("cannot open directory", dir);
+    int rc = ::fsync(fd);
+    ::close(fd);
+    if (rc != 0) throwErrno("fsync failed on directory", dir);
+}
+
+bool fileExists(const std::string& path) {
+    struct stat info;
+    return ::stat(path.c_str(), &info) == 0;
 }
 
 }  // namespace jerryql

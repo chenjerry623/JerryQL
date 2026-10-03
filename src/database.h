@@ -17,29 +17,36 @@ struct QueryResult {
     std::string message;               // e.g. "INSERT 3" for statements without rows
 };
 
-struct DatabaseOptions {
-    size_t bufferPoolPages = 1024;  // 4 MiB of 4 KiB pages
-};
+using DatabaseOptions = PagerOptions;
 
-// A database: a pager (file + buffer pool) and the catalog of tables stored
-// in it. Every write statement ends by flushing dirty pages and fsyncing.
-// Without a write-ahead log a crash during that flush can still corrupt the
-// file; crash safety is the next milestone.
+// A database: a pager (file, write-ahead log, buffer pool) and the catalog of
+// tables stored in it.
+//
+// Transactions: outside BEGIN ... COMMIT every write statement commits on its
+// own (autocommit). A commit is durable once it returns: its pages are in the
+// fsynced write-ahead log. A statement that fails validation (bad type,
+// duplicate key, ...) changes nothing and, inside a transaction, leaves the
+// transaction open. Any other failure rolls the transaction back.
 class Database {
 public:
-    // In-memory database (same B+tree code, backed by a MemoryFile).
+    // In-memory database (same code paths, backed by MemoryFiles).
     explicit Database(DatabaseOptions options = {});
-    // Opens or creates a database file.
+    // Opens or creates a database file and its log, "<path>-wal". Opening
+    // runs crash recovery.
     explicit Database(const std::string& path, DatabaseOptions options = {});
+    // Uses the given files; for crash-simulation tests.
+    Database(std::unique_ptr<File> dbFile, std::unique_ptr<File> walFile, DatabaseOptions options = {});
     Database(Database&&) = default;
+    // Rolls back an open transaction, checkpoints, and closes.
     ~Database();
 
     QueryResult execute(Statement& statement);
     QueryResult execute(const std::string& sql);  // exactly one statement
 
-    std::vector<std::string> tableNames() const { return catalog_.tableNames(); }
-    Table& table(const std::string& name) { return catalog_.getTable(name); }
+    std::vector<std::string> tableNames() const { return catalog_->tableNames(); }
+    Table& table(const std::string& name) { return catalog_->getTable(name); }
     Pager& pager() { return *pager_; }
+    bool inTransaction() const { return inTransaction_; }
 
 private:
     QueryResult createTable(const CreateTableStmt& stmt);
@@ -48,9 +55,13 @@ private:
     QueryResult select(SelectStmt& stmt);
     QueryResult update(UpdateStmt& stmt);
     QueryResult remove(DeleteStmt& stmt);
+    QueryResult transaction(const TransactionStmt& stmt);
+    QueryResult runWrite(Statement& statement);
+    void rollbackAndReload();
 
     std::unique_ptr<Pager> pager_;
-    Catalog catalog_;
+    std::unique_ptr<Catalog> catalog_;
+    bool inTransaction_ = false;
 };
 
 }  // namespace jerryql

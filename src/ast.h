@@ -94,7 +94,13 @@ struct DeleteStmt {
     ExprPtr where;  // may be null
 };
 
+enum class TransactionAction { Begin, Commit, Rollback };
+
+struct TransactionStmt {
+    TransactionAction action;
+};
+
 using Statement = std::variant<CreateTableStmt, DropTableStmt, InsertStmt, SelectStmt,
-                               UpdateStmt, DeleteStmt>;
+                               UpdateStmt, DeleteStmt, TransactionStmt>;
 
 }  // namespace jerryql

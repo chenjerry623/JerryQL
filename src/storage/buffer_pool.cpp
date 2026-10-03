@@ -1,5 +1,6 @@
 #include "storage/buffer_pool.h"
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 
@@ -42,7 +43,7 @@ char* PageRef::mutableData() {
 
 // ---------- BufferPool ----------
 
-BufferPool::BufferPool(File& file, size_t capacity) : file_(file), frames_(capacity) {
+BufferPool::BufferPool(PageIO& io, size_t capacity) : io_(io), frames_(capacity) {
     if (capacity < 8) throw std::invalid_argument("buffer pool needs at least 8 frames");
     for (size_t i = 0; i < capacity; ++i) {
         frames_[i].data = std::make_unique<char[]>(kPageSize);
@@ -75,7 +76,7 @@ size_t BufferPool::frameFor(PageId id, bool readFromFile) {
     frame.used = true;
     frame.dirty = false;
     frame.pins = 0;
-    if (readFromFile) file_.read(uint64_t(id) * kPageSize, frame.data.get(), kPageSize);
+    if (readFromFile) io_.readPage(id, frame.data.get());
     pageTable_[id] = index;
     pin(index);
     return index;
@@ -99,7 +100,7 @@ size_t BufferPool::takeVictim() {
 }
 
 void BufferPool::writeBack(Frame& frame) {
-    file_.write(uint64_t(frame.id) * kPageSize, frame.data.get(), kPageSize);
+    io_.writePage(frame.id, frame.data.get());
     frame.dirty = false;
     ++stats_.writeBacks;
 }
@@ -122,9 +123,54 @@ void BufferPool::unpin(size_t index) {
     }
 }
 
-void BufferPool::flushAll() {
+bool BufferPool::hasDirtyPages() const {
+    for (const Frame& frame : frames_) {
+        if (frame.used && frame.dirty) return true;
+    }
+    return false;
+}
+
+void BufferPool::forEachDirty(const std::function<void(PageId, const char*)>& fn) const {
+    std::vector<const Frame*> dirty;
+    for (const Frame& frame : frames_) {
+        if (frame.used && frame.dirty) dirty.push_back(&frame);
+    }
+    std::sort(dirty.begin(), dirty.end(),
+              [](const Frame* a, const Frame* b) { return a->id < b->id; });
+    for (const Frame* frame : dirty) fn(frame->id, frame->data.get());
+}
+
+void BufferPool::markAllClean() {
+    for (Frame& frame : frames_) frame.dirty = false;
+}
+
+void BufferPool::writeBackAll() {
     for (Frame& frame : frames_) {
         if (frame.used && frame.dirty) writeBack(frame);
+    }
+}
+
+void BufferPool::dropFrame(size_t index) {
+    Frame& frame = frames_[index];
+    if (frame.pins != 0) throw std::logic_error("cannot discard a pinned page");
+    if (frame.inLru) {
+        lru_.erase(frame.lruPosition);
+        frame.inLru = false;
+    }
+    pageTable_.erase(frame.id);
+    frame.used = false;
+    frame.dirty = false;
+    freeFrames_.push_back(index);
+}
+
+void BufferPool::discard(PageId id) {
+    auto it = pageTable_.find(id);
+    if (it != pageTable_.end()) dropFrame(it->second);
+}
+
+void BufferPool::discardDirty() {
+    for (size_t i = 0; i < frames_.size(); ++i) {
+        if (frames_[i].used && frames_[i].dirty) dropFrame(i);
     }
 }
 

@@ -24,7 +24,9 @@ unsigned testSeed(unsigned fallback) {
 }
 
 std::unique_ptr<Pager> memoryPager(size_t poolPages) {
-    auto pager = std::make_unique<Pager>(std::make_unique<MemoryFile>(), poolPages);
+    PagerOptions options;
+    options.poolPages = poolPages;
+    auto pager = std::make_unique<Pager>(std::make_unique<MemoryFile>(), std::make_unique<MemoryFile>(), options);
     if (BTree::create(*pager) != Pager::kSchemaRootPage) throw std::logic_error("setup");
     return pager;
 }
@@ -276,7 +278,8 @@ TEST(rowsLargerThanAPageCellAreRejected) {
 
 TEST(bufferPoolEvictsLeastRecentlyUsed) {
     MemoryFile file;
-    BufferPool pool(file, 8);
+    FilePageIO io(file);
+    BufferPool pool(io, 8);
     for (PageId id = 0; id < 8; ++id) {
         PageRef page = pool.fetchNew(id);
         page.mutableData()[0] = char('a' + id);
@@ -292,7 +295,8 @@ TEST(bufferPoolEvictsLeastRecentlyUsed) {
 
 TEST(bufferPoolRefusesWhenEveryPageIsPinned) {
     MemoryFile file;
-    BufferPool pool(file, 8);
+    FilePageIO io(file);
+    BufferPool pool(io, 8);
     std::vector<PageRef> pinned;
     for (PageId id = 0; id < 8; ++id) pinned.push_back(pool.fetch(id));
     CHECK_THROWS(pool.fetch(100), std::runtime_error, "every page is pinned");
