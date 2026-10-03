@@ -67,6 +67,15 @@ bool comparison(BinaryOp op, const Value& lhs, const Value& rhs) {
     }
 }
 
+// Columns and literals are returned by reference instead of copied (a copy
+// of a TEXT value allocates); anything else is computed into `scratch`.
+const Value& evaluateRef(const Expr& expr, const Row& row, Value& scratch) {
+    if (expr.kind == ExprKind::Literal) return expr.value;
+    if (expr.kind == ExprKind::Column && expr.columnIndex) return row[*expr.columnIndex];
+    scratch = evaluate(expr, row);
+    return scratch;
+}
+
 Value evaluateUnary(const Expr& expr, const Row& row) {
     Value operand = evaluate(*expr.left, row);
     if (expr.unaryOp == UnaryOp::Not) return fromBool(!isTrue(operand));
@@ -81,8 +90,9 @@ Value evaluateBinary(const Expr& expr, const Row& row) {
     if (expr.binaryOp == BinaryOp::Or) {
         return fromBool(isTrue(evaluate(*expr.left, row)) || isTrue(evaluate(*expr.right, row)));
     }
-    Value lhs = evaluate(*expr.left, row);
-    Value rhs = evaluate(*expr.right, row);
+    Value leftScratch, rightScratch;
+    const Value& lhs = evaluateRef(*expr.left, row, leftScratch);
+    const Value& rhs = evaluateRef(*expr.right, row, rightScratch);
     switch (expr.binaryOp) {
         case BinaryOp::Add:
         case BinaryOp::Subtract:

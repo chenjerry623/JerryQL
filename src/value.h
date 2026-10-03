@@ -18,6 +18,14 @@ public:
     static Value integer(int64_t v) { return Value(Data(v)); }
     static Value text(std::string v) { return Value(Data(std::move(v))); }
 
+    // In-place setters; assignText reuses the existing string's buffer, so
+    // decoding row after row into the same Row doesn't allocate.
+    void assignInt(int64_t v) { data_ = v; }
+    void assignText(const char* text, size_t length) {
+        if (auto* existing = std::get_if<std::string>(&data_)) existing->assign(text, length);
+        else data_ = std::string(text, length);
+    }
+
     Type type() const { return isInt() ? Type::Int : Type::Text; }
     bool isInt() const { return std::holds_alternative<int64_t>(data_); }
     int64_t asInt() const { return std::get<int64_t>(data_); }
