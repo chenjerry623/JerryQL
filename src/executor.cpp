@@ -1,8 +1,10 @@
 #include "executor.h"
 
 #include <algorithm>
+#include <map>
 
 #include "expr_eval.h"
+#include "sql_error.h"
 
 namespace jerryql {
 
@@ -97,6 +99,97 @@ bool LimitOperator::next(Tuple& out) {
 
 std::string LimitOperator::describe() const {
     return "LIMIT " + std::to_string(limit_) + (offset_ > 0 ? " OFFSET " + std::to_string(offset_) : "");
+}
+
+// ---------- Aggregate ----------
+
+AggregateOperator::AggregateOperator(OperatorPtr child, std::vector<const Expr*> keys,
+                                     std::vector<AggregateSpec> aggregates)
+    : child_(std::move(child)), keys_(std::move(keys)), aggregates_(std::move(aggregates)) {}
+
+bool AggregateOperator::KeyLess::operator()(const std::vector<Value>& a,
+                                            const std::vector<Value>& b) const {
+    for (size_t i = 0; i < a.size(); ++i) {
+        int c = compareValues(a[i], b[i]);
+        if (c != 0) return c < 0;
+    }
+    return false;
+}
+
+void AggregateOperator::accumulate(State& state, const AggregateSpec& spec, const Row& row) const {
+    ++state.count;
+    if (spec.func == AggregateFunc::Count) return;
+    Value value = evaluate(*spec.argument, row);
+    if (spec.func == AggregateFunc::Sum || spec.func == AggregateFunc::Avg) {
+        if (!value.isInt()) throw SqlError(spec.text + " needs INT values");
+        if (__builtin_add_overflow(state.sum, value.asInt(), &state.sum)) {
+            throw SqlError("integer overflow in " + spec.text);
+        }
+        return;
+    }
+    if (!state.hasValue) {
+        state.best = std::move(value);
+        state.hasValue = true;
+        return;
+    }
+    int c = compareValues(value, state.best);
+    if ((spec.func == AggregateFunc::Min && c < 0) || (spec.func == AggregateFunc::Max && c > 0)) {
+        state.best = std::move(value);
+    }
+}
+
+// Without NULL there is no value for MIN/MAX/AVG of zero rows; that's an error.
+Value AggregateOperator::finish(const State& state, const AggregateSpec& spec) const {
+    switch (spec.func) {
+        case AggregateFunc::Count: return Value::integer(state.count);
+        case AggregateFunc::Sum: return Value::integer(state.sum);
+        case AggregateFunc::Avg:
+            if (state.count == 0) throw SqlError(spec.text + " of no rows (JerryQL has no NULL yet)");
+            return Value::integer(state.sum / state.count);
+        case AggregateFunc::Min:
+        case AggregateFunc::Max:
+            if (!state.hasValue) throw SqlError(spec.text + " of no rows (JerryQL has no NULL yet)");
+            return state.best;
+    }
+    return Value();
+}
+
+void AggregateOperator::materialize() {
+    std::map<std::vector<Value>, std::vector<State>, KeyLess> groups;
+    if (keys_.empty()) groups[{}] = std::vector<State>(aggregates_.size());
+    Tuple tuple;
+    std::vector<Value> key;
+    while (child_->next(tuple)) {
+        key.clear();
+        for (const Expr* expr : keys_) key.push_back(evaluate(*expr, tuple.row));
+        auto it = groups.find(key);
+        if (it == groups.end()) it = groups.emplace(key, std::vector<State>(aggregates_.size())).first;
+        for (size_t i = 0; i < aggregates_.size(); ++i) accumulate(it->second[i], aggregates_[i], tuple.row);
+    }
+    for (const auto& [groupKey, states] : groups) {
+        Row row = groupKey;
+        for (size_t i = 0; i < aggregates_.size(); ++i) row.push_back(finish(states[i], aggregates_[i]));
+        results_.push_back(std::move(row));
+    }
+    materialized_ = true;
+}
+
+bool AggregateOperator::next(Tuple& out) {
+    if (!materialized_) materialize();
+    if (position_ >= results_.size()) return false;
+    out.key = int64_t(position_);
+    out.row = results_[position_++];
+    return true;
+}
+
+std::string AggregateOperator::describe() const {
+    std::string text = "AGGREGATE ";
+    for (size_t i = 0; i < aggregates_.size(); ++i) text += (i ? ", " : "") + aggregates_[i].text;
+    if (!keys_.empty()) {
+        text += " GROUP BY ";
+        for (size_t i = 0; i < keys_.size(); ++i) text += (i ? ", " : "") + exprToString(*keys_[i]);
+    }
+    return text;
 }
 
 // ---------- Projection ----------

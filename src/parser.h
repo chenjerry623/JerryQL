@@ -74,6 +74,7 @@ private:
     ExprPtr parseMultiplicative();
     ExprPtr parseUnary();
     ExprPtr parsePrimary();
+    ExprPtr parseAggregateCall();
 };
 
 // Parses exactly one statement (a trailing ';' is allowed). Throws SqlError.

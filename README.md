@@ -45,6 +45,8 @@ UPDATE employees SET salary = salary + 10000 WHERE id = 2;
 DELETE FROM employees WHERE id >= 10 AND id < 20;
 EXPLAIN SELECT name FROM employees WHERE id = 3;
 BEGIN; UPDATE employees SET salary = 0; ROLLBACK;
+SELECT dept, COUNT(*) AS people, SUM(salary) AS payroll FROM employees
+  GROUP BY dept HAVING COUNT(*) > 1 ORDER BY payroll DESC;
 DROP TABLE employees;
 ```
 
@@ -68,7 +70,11 @@ jerryql> EXPLAIN SELECT name FROM employees WHERE id >= 2 AND id < 5;
 - Transactions: `BEGIN` / `COMMIT` / `ROLLBACK`. Outside a transaction,
   each write statement commits on its own.
 
-**Not supported (yet):** NULL, joins, aggregates/GROUP BY, subqueries,
+- Aggregates: `COUNT(*)`, `COUNT`, `SUM`, `MIN`, `MAX`, `AVG` (integer
+  result), with `GROUP BY` on any expressions, `HAVING`, and `ORDER BY` on
+  aggregates or aliases. `LIMIT n OFFSET m`.
+
+**Not supported (yet):** NULL, joins, subqueries,
 secondary indexes, concurrent connections.
 
 Tables live in a single database file (`./build/jerryql --db app.db`), or in
@@ -89,7 +95,7 @@ SQL text -> Lexer -> Parser -> AST -> Planner -> Operator tree -> Executor
 | Lexer | `src/lexer.cpp` | Bad input becomes an error token, so one bad statement doesn't abort a whole script. |
 | Parser | `src/parser.cpp` | Hand-written recursive descent, one function per precedence level (`OR` < `AND` < `NOT` < comparison < `+ -` < `* /` < unary). Recovers at the next `;` after a syntax error. |
 | Planner | `src/planner.cpp` | Extracts a primary-key range from top-level `AND`ed comparisons such as `id >= 10 AND id < 20`, giving a point lookup, range scan or full scan. Detects contradictions like `id > 5 AND id < 3`. The full `WHERE` is still applied by a filter, so the range only limits how much is read. |
-| Executor | `src/executor.cpp` | Volcano-style operators (`Scan`, `Filter`, `Sort`, `Limit`, `Projection`), each with `next()`. Column names are resolved to indexes once at plan time, not per row. |
+| Executor | `src/executor.cpp` | Volcano-style operators (`Scan`, `Filter`, `Aggregate`, `Sort`, `Limit`, `Projection`), each with `next()`. Column names are resolved to indexes once at plan time, not per row. |
 | Browser build | `web/` | The same engine compiled with Emscripten behind a three-function C API (`jerryql_run`, `jerryql_reset`, `jerryql_free`). CI checks its output matches the native build byte for byte. |
 | Storage interface | `src/table_store.h` | Rows keyed by a 64-bit integer: the primary key, or a hidden row id. Ordered range scans. |
 | B+tree | `src/storage/btree.cpp` | One tree per table, rows stored in the leaves (a clustered table, like SQLite's rowid tables). |
@@ -106,6 +112,13 @@ Choices worth explaining:
 - **Statements are all-or-nothing for validation.** A multi-row `INSERT` or
   an `UPDATE` checks types and duplicate keys for every row before applying
   any of them.
+- **Aggregation rewrites the query.** The planner turns every `GROUP BY`
+  key and aggregate in `SELECT`, `HAVING` and `ORDER BY` into a reference
+  to a column of the aggregate operator's output row. `SUM(x)` used twice is
+  computed once. A bare column that is neither a key nor inside an aggregate
+  is rejected, as in standard SQL. Groups are kept in an ordered map, so
+  output comes out sorted by key. Without NULL, `MIN`/`MAX`/`AVG` over zero
+  rows is an error rather than NULL.
 - **`AND` / `OR` short-circuit**, so `WHERE id > 0 OR x / 0 = 1` doesn't
   raise division by zero.
 

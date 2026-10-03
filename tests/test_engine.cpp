@@ -255,3 +255,33 @@ TEST(randomizedAgainstMapOracle) {
     }
     CHECK_EQ(db.table("kv").store->size(), oracle.size());
 }
+
+TEST(aggregatesAndGroupBy) {
+    Database db;
+    db.execute("CREATE TABLE s (id INT PRIMARY KEY, city TEXT, amount INT)");
+    db.execute("INSERT INTO s VALUES (1, 'b', 10), (2, 'a', 20), (3, 'b', 30), (4, 'c', 5)");
+    CHECK_EQ(rowsOf(db, "SELECT COUNT(*), SUM(amount), MIN(amount), MAX(amount), AVG(amount) FROM s"),
+             std::string("4,65,5,30,16"));
+    CHECK_EQ(rowsOf(db, "SELECT city, COUNT(*), SUM(amount) FROM s GROUP BY city"),
+             std::string("a,1,20;b,2,40;c,1,5"));
+    CHECK_EQ(rowsOf(db, "SELECT city, SUM(amount) AS t FROM s GROUP BY city ORDER BY t DESC"),
+             std::string("b,40;a,20;c,5"));
+    CHECK_EQ(rowsOf(db, "SELECT city FROM s GROUP BY city HAVING COUNT(*) > 1"), std::string("b"));
+    CHECK_EQ(rowsOf(db, "SELECT COUNT(*) FROM s WHERE amount > 100"), std::string("0"));
+    CHECK_EQ(rowsOf(db, "SELECT SUM(amount) * 2 + COUNT(*) FROM s"), std::string("134"));
+    CHECK_EQ(rowsOf(db, "SELECT city, COUNT(*) FROM s WHERE amount > 100 GROUP BY city"), std::string(""));
+    CHECK_THROWS(db.execute("SELECT city, amount FROM s GROUP BY city"), SqlError, "must appear in GROUP BY");
+    CHECK_THROWS(db.execute("SELECT * FROM s WHERE COUNT(*) > 1"), SqlError, "only allowed in SELECT");
+    CHECK_THROWS(db.execute("SELECT MIN(amount) FROM s WHERE id > 9"), SqlError, "no NULL");
+    CHECK_THROWS(db.execute("SELECT SUM(SUM(amount)) FROM s"), SqlError, "can't be nested");
+    CHECK_THROWS(db.execute("SELECT SUM(amount * 9223372036854775807) FROM s"), SqlError, "overflow");
+}
+
+TEST(orderByAlias) {
+    Database db;
+    db.execute("CREATE TABLE s (id INT PRIMARY KEY, amount INT)");
+    db.execute("INSERT INTO s VALUES (1, 30), (2, 10), (3, 20)");
+    CHECK_EQ(rowsOf(db, "SELECT id, amount * 2 AS d FROM s ORDER BY d"), std::string("2,20;3,40;1,60"));
+    // An alias wins over a column of the same name, as in SQLite and PostgreSQL.
+    CHECK_EQ(rowsOf(db, "SELECT id AS amount FROM s ORDER BY amount DESC"), std::string("3;2;1"));
+}

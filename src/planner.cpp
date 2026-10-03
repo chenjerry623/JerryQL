@@ -113,12 +113,132 @@ OperatorPtr planRowSource(const Table& table, Expr* where) {
     return plan;
 }
 
-OperatorPtr planSelect(SelectStmt& stmt, const Table& table) {
-    for (SelectItem& item : stmt.items) bindColumns(*item.expr, table.schema);
-    for (OrderItem& item : stmt.orderBy) bindColumns(*item.expr, table.schema);
-    if (stmt.limit && *stmt.limit < 0) throw SqlError("LIMIT must not be negative");
+namespace {
 
+bool isAggregateQuery(const SelectStmt& stmt) {
+    if (!stmt.groupBy.empty() || stmt.having) return true;
+    for (const SelectItem& item : stmt.items) {
+        if (containsAggregate(*item.expr)) return true;
+    }
+    for (const OrderItem& item : stmt.orderBy) {
+        if (containsAggregate(*item.expr)) return true;
+    }
+    return false;
+}
+
+ExprPtr outputColumn(const std::string& text, size_t index) {
+    ExprPtr ref = makeColumn(text);
+    ref->columnIndex = index;
+    return ref;
+}
+
+// Rewrites an expression evaluated after aggregation so it reads the
+// aggregate operator's output row: [group keys..., aggregate results...].
+// A subexpression that matches a GROUP BY key, or that is an aggregate, becomes
+// a reference to that output column; anything else must be built from those.
+class AggregateRewriter {
+public:
+    AggregateRewriter(const std::vector<ExprPtr>& groupBy, const Schema& schema) : schema_(schema) {
+        for (const ExprPtr& key : groupBy) keyTexts_.push_back(exprToString(*key));
+    }
+
+    void rewrite(ExprPtr& expr) {
+        std::string text = exprToString(*expr);
+        for (size_t i = 0; i < keyTexts_.size(); ++i) {
+            if (text == keyTexts_[i]) {
+                expr = outputColumn(text, i);
+                return;
+            }
+        }
+        if (expr->kind == ExprKind::Aggregate) {
+            expr = outputColumn(text, keyTexts_.size() + aggregateIndex(*expr, text));
+            return;
+        }
+        if (expr->kind == ExprKind::Column) {
+            throw SqlError("column " + expr->column + " must appear in GROUP BY or inside an aggregate");
+        }
+        if (expr->left) rewrite(expr->left);
+        if (expr->right) rewrite(expr->right);
+    }
+
+    std::vector<AggregateSpec> takeAggregates() { return std::move(aggregates_); }
+
+private:
+    size_t aggregateIndex(Expr& aggregate, const std::string& text) {
+        for (size_t i = 0; i < aggregates_.size(); ++i) {
+            if (aggregates_[i].text == text) return i;  // SUM(x) used twice is computed once
+        }
+        if (aggregate.left) {
+            if (containsAggregate(*aggregate.left)) throw SqlError("aggregates can't be nested: " + text);
+            bindColumns(*aggregate.left, schema_);
+        }
+        aggregates_.push_back({aggregate.aggregate, std::move(aggregate.left), text});
+        return aggregates_.size() - 1;
+    }
+
+    const Schema& schema_;
+    std::vector<std::string> keyTexts_;
+    std::vector<AggregateSpec> aggregates_;
+};
+
+// ORDER BY may name a SELECT alias, e.g. "SELECT city, COUNT(*) AS n ... ORDER BY n":
+// the alias is replaced by a copy of the aliased expression. As in SQLite and
+// PostgreSQL, an alias wins over a table column of the same name.
+bool resolveOrderAliases(SelectStmt& stmt, std::vector<bool>& resolved) {
+    bool any = false;
+    resolved.assign(stmt.orderBy.size(), false);
+    for (size_t i = 0; i < stmt.orderBy.size(); ++i) {
+        OrderItem& order = stmt.orderBy[i];
+        if (order.expr->kind != ExprKind::Column) continue;
+        for (const SelectItem& item : stmt.items) {
+            if (!item.alias.empty() && item.alias == order.expr->column) {
+                order.expr = cloneExpr(*item.expr);
+                resolved[i] = any = true;
+                break;
+            }
+        }
+    }
+    return any;
+}
+
+// SELECT ... GROUP BY: row source -> Aggregate -> Filter (HAVING) -> Sort ->
+// Limit -> Projection, with everything after the aggregate rewritten to read
+// its output row.
+OperatorPtr planAggregateSelect(SelectStmt& stmt, const Table& table) {
+    if (stmt.items.empty()) throw SqlError("SELECT * can't be combined with GROUP BY or aggregates");
+    for (ExprPtr& key : stmt.groupBy) bindColumns(*key, table.schema);
+
+    AggregateRewriter rewriter(stmt.groupBy, table.schema);
+    for (SelectItem& item : stmt.items) rewriter.rewrite(item.expr);
+    if (stmt.having) rewriter.rewrite(stmt.having);
+    std::vector<bool> aliased;
+    resolveOrderAliases(stmt, aliased);  // copies are already rewritten
+    for (size_t i = 0; i < stmt.orderBy.size(); ++i) {
+        if (!aliased[i]) rewriter.rewrite(stmt.orderBy[i].expr);
+    }
+
+    std::vector<const Expr*> keys;
+    for (const ExprPtr& key : stmt.groupBy) keys.push_back(key.get());
     OperatorPtr plan = planRowSource(table, stmt.where.get());
+    plan = std::make_unique<AggregateOperator>(std::move(plan), std::move(keys), rewriter.takeAggregates());
+    if (stmt.having) plan = std::make_unique<FilterOperator>(std::move(plan), *stmt.having);
+    return plan;
+}
+
+}  // namespace
+
+OperatorPtr planSelect(SelectStmt& stmt, const Table& table) {
+    if (stmt.limit && *stmt.limit < 0) throw SqlError("LIMIT must not be negative");
+    OperatorPtr plan;
+    if (isAggregateQuery(stmt)) {
+        plan = planAggregateSelect(stmt, table);
+    } else {
+        std::vector<bool> aliased;
+        resolveOrderAliases(stmt, aliased);
+        for (SelectItem& item : stmt.items) bindColumns(*item.expr, table.schema);
+        for (OrderItem& item : stmt.orderBy) bindColumns(*item.expr, table.schema);
+        plan = planRowSource(table, stmt.where.get());
+    }
     if (!stmt.orderBy.empty()) {
         std::vector<SortKey> keys;
         for (const OrderItem& item : stmt.orderBy) keys.push_back({item.expr.get(), item.descending});

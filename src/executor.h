@@ -90,6 +90,47 @@ private:
     int64_t produced_ = 0;
 };
 
+struct AggregateSpec {
+    AggregateFunc func;
+    ExprPtr argument;  // null for COUNT(*); bound to the input schema
+    std::string text;  // e.g. "SUM(amount)", for EXPLAIN and headers
+};
+
+// GROUP BY: reads all input, groups it by the key expressions, and emits one
+// row per group: the key values followed by each aggregate's result. Groups
+// come out in key order (an ordered map, not a hash table). With no keys
+// there is exactly one group, even for empty input, so COUNT(*) gives 0.
+class AggregateOperator : public Operator {
+public:
+    AggregateOperator(OperatorPtr child, std::vector<const Expr*> keys,
+                      std::vector<AggregateSpec> aggregates);
+    bool next(Tuple& out) override;
+    std::string describe() const override;
+    const Operator* child() const override { return child_.get(); }
+
+private:
+    struct State {
+        int64_t count = 0;
+        int64_t sum = 0;
+        bool hasValue = false;
+        Value best;  // MIN / MAX so far
+    };
+    struct KeyLess {
+        bool operator()(const std::vector<Value>& a, const std::vector<Value>& b) const;
+    };
+
+    void materialize();
+    void accumulate(State& state, const AggregateSpec& spec, const Row& row) const;
+    Value finish(const State& state, const AggregateSpec& spec) const;
+
+    OperatorPtr child_;
+    std::vector<const Expr*> keys_;
+    std::vector<AggregateSpec> aggregates_;
+    std::vector<Row> results_;
+    size_t position_ = 0;
+    bool materialized_ = false;
+};
+
 // Computes the SELECT list for each tuple.
 class ProjectionOperator : public Operator {
 public:

@@ -205,6 +205,7 @@
             <tr><td>Find one order by <code>id</code></td><td class="plan">PK LOOKUP</td><td class="num" id="t-lookup">–</td></tr>
             <tr><td>Read 100 consecutive orders by <code>id</code></td><td class="plan">PK RANGE SCAN</td><td class="num" id="t-range">–</td></tr>
             <tr><td>Find orders by <code>amount</code> (no index)</td><td class="plan">SEQ SCAN</td><td class="num" id="t-scan">–</td></tr>
+            <tr><td>Revenue per city over every order (<code>GROUP BY</code>)</td><td class="plan">AGGREGATE</td><td class="num" id="t-group">–</td></tr>
           </tbody>
         </table>
         <p class="ratio" id="timing-note">The B+tree index finds a row without reading the rest of the table. Load data to see the difference.</p>
@@ -278,7 +279,7 @@ ORDER BY salary DESC;</textarea>
     </div>
     <div>
       <h3>Scope</h3>
-      <p>INT and TEXT columns, one INT primary key, transactions. No NULLs, joins or aggregates yet. Rows are limited to 1,000 bytes.</p>
+      <p>INT and TEXT columns, one INT primary key, transactions, <code>COUNT/SUM/MIN/MAX/AVG</code> with <code>GROUP BY</code> and <code>HAVING</code>. No NULLs or joins yet. Rows are limited to 1,000 bytes.</p>
     </div>
   </section>
 </div>
@@ -304,6 +305,8 @@ ORDER BY salary DESC;</textarea>
     { label: "Raise for Infra", sql: "UPDATE employees SET salary = salary + 10000 WHERE dept = 'Infra';\nSELECT name, salary FROM employees WHERE dept = 'Infra';" },
     { label: "Shift every key", sql: "-- Rows are read before any are written, so moving keys is safe:\nUPDATE employees SET id = id + 100;\nSELECT id, name FROM employees;" },
     { label: "Rollback", sql: "BEGIN;\nDELETE FROM employees WHERE dept = 'Engineering';\nSELECT name, dept FROM employees;\nROLLBACK;\n-- The delete is undone:\nSELECT name, dept FROM employees;" },
+    { label: "Group and count", sql: "SELECT dept, COUNT(*) AS people, SUM(salary) AS payroll, MAX(salary) AS top\nFROM employees\nGROUP BY dept\nORDER BY payroll DESC;" },
+    { label: "Revenue by city", sql: "-- Load orders above first.\nSELECT city, COUNT(*) AS orders, SUM(amount) AS revenue, AVG(amount) AS average\nFROM orders\nGROUP BY city\nHAVING COUNT(*) > 100\nORDER BY revenue DESC;" },
     { label: "Query the orders", sql: "-- Load orders above first.\nEXPLAIN SELECT * FROM orders WHERE id >= 5000 AND id < 5010;\nSELECT * FROM orders WHERE id >= 5000 AND id < 5010;\nSELECT customer, amount FROM orders WHERE city = 'Tokyo' AND amount > 99990;" },
     { label: "Errors", sql: "INSERT INTO employees VALUES (1, 'Duplicate', 'X', 0);\nSELECT name FROM employees WHERE salary = 'lots';\nSELECT salary / 0 FROM employees;\nSELEC * FROM employees;" },
     { label: "Show schema", sql: ".schema" }
@@ -501,11 +504,13 @@ ORDER BY salary DESC;</textarea>
     var lookup = timeQuery(function () { return "SELECT * FROM orders WHERE id = " + randomInt(rows); }, 500);
     var range = timeQuery(function () { var lo = randomInt(rows - 100); return "SELECT * FROM orders WHERE id >= " + lo + " AND id < " + (lo + 100); }, 100);
     var scan = timeQuery(function () { return "SELECT * FROM orders WHERE amount = " + randomInt(100000); }, 3);
+    var group = timeQuery(function () { return "SELECT city, COUNT(*), SUM(amount) FROM orders GROUP BY city"; }, 1);
     $("t-lookup").textContent = formatMs(lookup);
     $("t-range").textContent = formatMs(range);
     $("t-scan").textContent = formatMs(scan);
+    $("t-group").textContent = formatMs(group);
     $("timing-note").innerHTML = "On " + formatCount(rows) + " rows, finding an order by its indexed <code>id</code> was <b>" +
-      formatCount(Math.round(scan / lookup)) + "× faster</b> than scanning for it by <code>amount</code>. Timings are averages from your browser, just now (500, 100 and 3 runs).";
+      formatCount(Math.round(scan / lookup)) + "× faster</b> than scanning for it by <code>amount</code>. Timings are averages from your browser, just now (500, 100, 3 and 1 runs).";
   }
 
   async function loadOrders(total) {
@@ -658,7 +663,7 @@ ORDER BY salary DESC;</textarea>
     runScript(SEED_SQL);
     output.textContent = "";
     appendOutput("-- Data reset: only the employees table remains.\n\n");
-    ["stat-rows", "stat-size", "stat-time", "stat-rate", "t-lookup", "t-range", "t-scan"].forEach(function (id) { $(id).textContent = "–"; });
+    ["stat-rows", "stat-size", "stat-time", "stat-rate", "t-lookup", "t-range", "t-scan", "t-group"].forEach(function (id) { $(id).textContent = "–"; });
     $("progress-bar").style.width = "0%";
     browser.table = null;
     showGridMessage("Pick a table on the left.");

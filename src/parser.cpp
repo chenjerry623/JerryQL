@@ -24,7 +24,7 @@ std::string toLower(std::string s) {
 bool isReservedWord(const std::string& word) {
     static const std::set<std::string> reserved = {
         "AND",    "AS",      "ASC",   "BEGIN",   "BY",     "COMMIT", "CREATE", "DELETE", "DESC",  "DROP",
-        "EXPLAIN", "FROM",   "INSERT", "INT",    "INTEGER", "INTO",  "KEY",   "LIMIT",
+        "EXPLAIN", "FROM",   "GROUP",  "HAVING",   "INSERT", "INT",    "INTEGER", "INTO",  "KEY",   "LIMIT",
         "NOT",    "OFFSET",  "OR",      "ORDER", "PRIMARY", "ROLLBACK", "SELECT", "SET",    "TABLE", "TEXT",
         "TRANSACTION",
         "UPDATE", "VALUES",  "WHERE"};
@@ -256,6 +256,13 @@ SelectStmt Parser::parseSelect() {
     expectKeyword("FROM");
     stmt.table = expectName("table name");
     if (acceptKeyword("WHERE")) stmt.where = parseExpr();
+    if (acceptKeyword("GROUP")) {
+        expectKeyword("BY");
+        do {
+            stmt.groupBy.push_back(parseExpr());
+        } while (acceptSymbol(","));
+    }
+    if (acceptKeyword("HAVING")) stmt.having = parseExpr();
     if (acceptKeyword("ORDER")) {
         expectKeyword("BY");
         do {
@@ -391,9 +398,32 @@ ExprPtr Parser::parsePrimary() {
         return inner;
     }
     if (token.kind == TokenKind::Identifier && !isReservedWord(token.text)) {
+        if (peek(1).kind == TokenKind::Symbol && peek(1).text == "(") return parseAggregateCall();
         return makeColumn(toLower(advance().text));
     }
     fail("an expression");
+}
+
+// COUNT(*), COUNT(expr), SUM(expr), MIN(expr), MAX(expr), AVG(expr).
+ExprPtr Parser::parseAggregateCall() {
+    static const std::pair<const char*, AggregateFunc> functions[] = {
+        {"COUNT", AggregateFunc::Count}, {"SUM", AggregateFunc::Sum}, {"MIN", AggregateFunc::Min},
+        {"MAX", AggregateFunc::Max},     {"AVG", AggregateFunc::Avg}};
+    std::string name = toUpper(peek().text);
+    for (const auto& [functionName, func] : functions) {
+        if (name != functionName) continue;
+        advance();
+        expectSymbol("(");
+        ExprPtr argument;
+        if (func == AggregateFunc::Count && acceptSymbol("*")) {
+            // COUNT(*): no argument
+        } else {
+            argument = parseExpr();
+        }
+        expectSymbol(")");
+        return makeAggregate(func, std::move(argument));
+    }
+    fail("COUNT, SUM, MIN, MAX or AVG (no other functions are supported)");
 }
 
 Statement parseOne(const std::string& sql) {

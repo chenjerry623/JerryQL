@@ -33,6 +33,44 @@ ExprPtr makeBinary(BinaryOp op, ExprPtr left, ExprPtr right) {
     return e;
 }
 
+ExprPtr makeAggregate(AggregateFunc func, ExprPtr argument) {
+    auto e = std::make_unique<Expr>();
+    e->kind = ExprKind::Aggregate;
+    e->aggregate = func;
+    e->left = std::move(argument);
+    return e;
+}
+
+ExprPtr cloneExpr(const Expr& expr) {
+    auto copy = std::make_unique<Expr>();
+    copy->kind = expr.kind;
+    copy->value = expr.value;
+    copy->column = expr.column;
+    copy->columnIndex = expr.columnIndex;
+    copy->unaryOp = expr.unaryOp;
+    copy->binaryOp = expr.binaryOp;
+    copy->aggregate = expr.aggregate;
+    if (expr.left) copy->left = cloneExpr(*expr.left);
+    if (expr.right) copy->right = cloneExpr(*expr.right);
+    return copy;
+}
+
+std::string aggregateName(AggregateFunc func) {
+    switch (func) {
+        case AggregateFunc::Count: return "COUNT";
+        case AggregateFunc::Sum: return "SUM";
+        case AggregateFunc::Min: return "MIN";
+        case AggregateFunc::Max: return "MAX";
+        case AggregateFunc::Avg: return "AVG";
+    }
+    return "?";
+}
+
+bool containsAggregate(const Expr& expr) {
+    if (expr.kind == ExprKind::Aggregate) return true;
+    return (expr.left && containsAggregate(*expr.left)) || (expr.right && containsAggregate(*expr.right));
+}
+
 std::string binaryOpSymbol(BinaryOp op) {
     switch (op) {
         case BinaryOp::Add: return "+";
@@ -74,6 +112,8 @@ std::string exprToString(const Expr& expr) {
         case ExprKind::Binary:
             return operandToString(*expr.left) + " " + binaryOpSymbol(expr.binaryOp) + " " +
                    operandToString(*expr.right);
+        case ExprKind::Aggregate:
+            return aggregateName(expr.aggregate) + "(" + (expr.left ? exprToString(*expr.left) : "*") + ")";
     }
     return "?";
 }

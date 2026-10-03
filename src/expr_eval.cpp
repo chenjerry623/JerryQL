@@ -7,6 +7,10 @@
 namespace jerryql {
 
 void bindColumns(Expr& expr, const Schema& schema) {
+    if (expr.kind == ExprKind::Aggregate) {
+        throw SqlError("aggregate " + exprToString(expr) +
+                       " is only allowed in SELECT, HAVING and ORDER BY");
+    }
     if (expr.kind == ExprKind::Column) {
         auto index = schema.indexOf(expr.column);
         if (!index) throw SqlError("no such column: " + expr.column);
@@ -119,6 +123,8 @@ Value evaluate(const Expr& expr, const Row& row) {
             return evaluateUnary(expr, row);
         case ExprKind::Binary:
             return evaluateBinary(expr, row);
+        case ExprKind::Aggregate:
+            break;  // the planner replaces aggregates before evaluation
     }
     throw SqlError("unknown expression");
 }

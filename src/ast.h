@@ -14,9 +14,10 @@ namespace jerryql {
 
 // ---------- Expressions ----------
 
-enum class ExprKind { Literal, Column, Unary, Binary };
+enum class ExprKind { Literal, Column, Unary, Binary, Aggregate };
 enum class UnaryOp { Negate, Not };
 enum class BinaryOp { Add, Subtract, Multiply, Divide, Eq, Ne, Lt, Le, Gt, Ge, And, Or };
+enum class AggregateFunc { Count, Sum, Min, Max, Avg };
 
 struct Expr;
 using ExprPtr = std::unique_ptr<Expr>;
@@ -28,7 +29,9 @@ struct Expr {
     std::optional<size_t> columnIndex;   // Column: set by bindColumns()
     UnaryOp unaryOp = UnaryOp::Negate;   // Unary
     BinaryOp binaryOp = BinaryOp::Add;   // Binary
-    ExprPtr left;                        // Unary operand, or Binary left side
+    AggregateFunc aggregate = AggregateFunc::Count;  // Aggregate
+    ExprPtr left;                        // Unary operand, Binary left side, or
+                                         // Aggregate argument (null for COUNT(*))
     ExprPtr right;                       // Binary right side
 };
 
@@ -36,6 +39,12 @@ ExprPtr makeLiteral(Value value);
 ExprPtr makeColumn(std::string name);
 ExprPtr makeUnary(UnaryOp op, ExprPtr operand);
 ExprPtr makeBinary(BinaryOp op, ExprPtr left, ExprPtr right);
+ExprPtr makeAggregate(AggregateFunc func, ExprPtr argument);  // null argument = COUNT(*)
+
+ExprPtr cloneExpr(const Expr& expr);  // deep copy, including bound column indexes
+
+std::string aggregateName(AggregateFunc func);
+bool containsAggregate(const Expr& expr);
 
 std::string binaryOpSymbol(BinaryOp op);
 // Readable SQL for an expression; used for result headers and EXPLAIN.
@@ -79,6 +88,8 @@ struct SelectStmt {
     std::vector<SelectItem> items;  // empty = SELECT *
     std::string table;
     ExprPtr where;                  // may be null
+    std::vector<ExprPtr> groupBy;
+    ExprPtr having;                 // may be null
     std::vector<OrderItem> orderBy;
     std::optional<int64_t> limit;
     int64_t offset = 0;             // rows to skip before LIMIT applies
