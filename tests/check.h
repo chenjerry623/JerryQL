@@ -57,10 +57,11 @@ std::string show(const T& value) {
         if (!(cond)) check::reportFailure(__FILE__, __LINE__, #cond); \
     } while (0)
 
+// Copies both sides, because (actual) may refer into a temporary.
 #define CHECK_EQ(actual, expected)                                                    \
     do {                                                                              \
-        const auto& a_ = (actual);                                                    \
-        const auto& e_ = (expected);                                                  \
+        const auto a_ = (actual);                                                     \
+        const auto e_ = (expected);                                                   \
         if (!(a_ == e_)) {                                                            \
             check::reportFailure(__FILE__, __LINE__,                                  \
                                  std::string(#actual) + "\n  actual:   " +            \

@@ -24,8 +24,10 @@ jobs:
         run: cmake --build build -j
       - name: Test
         run: cd build && ctest --output-on-failure
-      - name: Randomized test, 100 seeds
+      - name: Randomized engine test, 100 seeds
         run: for s in $(seq 1 100); do JERRYQL_SEED=$s ./build/jerryql_tests randomized > /dev/null || exit 1; done
+      - name: Randomized B+tree test, 20 seeds
+        run: for s in $(seq 1 20); do JERRYQL_SEED=$s ./build/jerryql_tests btreeRandomized > /dev/null || exit 1; done
 
   wasm:
     runs-on: ubuntu-latest

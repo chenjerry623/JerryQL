@@ -42,6 +42,8 @@ public:
     virtual bool contains(int64_t key) const = 0;
     virtual std::unique_ptr<Cursor> scan(const KeyRange& range) const = 0;
     virtual size_t size() const = 0;
+    // A fresh hidden key for tables without a primary key. Never reused.
+    virtual int64_t allocateRowId() = 0;
 };
 
 }  // namespace jerryql

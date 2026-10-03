@@ -6,6 +6,9 @@
 #include "parser.h"
 #include "planner.h"
 #include "sql_error.h"
+#include "storage/btree.h"
+#include "storage/file.h"
+#include "storage/row_codec.h"
 
 namespace jerryql {
 
@@ -15,6 +18,15 @@ QueryResult messageResult(std::string message) {
     QueryResult result;
     result.message = std::move(message);
     return result;
+}
+
+// B+tree cells hold at most kMaxPayload bytes; there are no overflow pages yet.
+void checkRowSize(const Row& row) {
+    size_t bytes = encodeRow(row).size();
+    if (bytes > kMaxPayload) {
+        throw SqlError("row too large: " + std::to_string(bytes) + " bytes (the limit is " +
+                       std::to_string(kMaxPayload) + ")");
+    }
 }
 
 void checkType(const Column& column, const Value& value) {
@@ -55,33 +67,50 @@ std::vector<size_t> insertColumnOrder(const InsertStmt& stmt, const Schema& sche
 
 }  // namespace
 
+Database::Database(DatabaseOptions options)
+    : pager_(std::make_unique<Pager>(std::make_unique<MemoryFile>(), options.bufferPoolPages)),
+      catalog_(*pager_) {}
+
+Database::Database(const std::string& path, DatabaseOptions options)
+    : pager_(std::make_unique<Pager>(std::make_unique<PosixFile>(path), options.bufferPoolPages)),
+      catalog_(*pager_) {
+    pager_->flush();  // a new file gets its header and schema tree right away
+}
+
+Database::~Database() {
+    if (!pager_) return;  // moved from
+    try {
+        pager_->flush();
+    } catch (const std::exception&) {
+        // Destructors must not throw; every write statement already flushed.
+    }
+}
+
 QueryResult Database::execute(const std::string& sql) {
     Statement statement = parseOne(sql);
     return execute(statement);
 }
 
 QueryResult Database::execute(Statement& statement) {
-    if (auto* s = std::get_if<CreateTableStmt>(&statement)) return createTable(*s);
-    if (auto* s = std::get_if<DropTableStmt>(&statement)) return dropTable(*s);
-    if (auto* s = std::get_if<InsertStmt>(&statement)) return insert(*s);
     if (auto* s = std::get_if<SelectStmt>(&statement)) return select(*s);
-    if (auto* s = std::get_if<UpdateStmt>(&statement)) return update(*s);
-    return remove(std::get<DeleteStmt>(statement));
+    QueryResult result;
+    if (auto* s = std::get_if<CreateTableStmt>(&statement)) {
+        result = createTable(*s);
+    } else if (auto* s = std::get_if<DropTableStmt>(&statement)) {
+        result = dropTable(*s);
+    } else if (auto* s = std::get_if<InsertStmt>(&statement)) {
+        result = insert(*s);
+    } else if (auto* s = std::get_if<UpdateStmt>(&statement)) {
+        result = update(*s);
+    } else {
+        result = remove(std::get<DeleteStmt>(statement));
+    }
+    pager_->flush();
+    return result;
 }
 
 QueryResult Database::createTable(const CreateTableStmt& stmt) {
-    Schema schema;
-    std::set<std::string> names;
-    for (const ColumnDef& def : stmt.columns) {
-        if (!names.insert(def.name).second) throw SqlError("duplicate column name: " + def.name);
-        if (def.primaryKey) {
-            if (schema.primaryKey) throw SqlError("a table can have only one PRIMARY KEY");
-            if (def.type != Type::Int) throw SqlError("PRIMARY KEY column must be INT");
-            schema.primaryKey = schema.columns.size();
-        }
-        schema.columns.push_back({def.name, def.type});
-    }
-    catalog_.createTable(stmt.table, std::move(schema));
+    catalog_.createTable(stmt.table, schemaFromDefinition(stmt));
     return messageResult("CREATE TABLE");
 }
 
@@ -110,6 +139,7 @@ QueryResult Database::insert(InsertStmt& stmt) {
             row[col] = evaluate(*tuple[order[col]], Row{});
             checkType(schema.columns[col], row[col]);
         }
+        checkRowSize(row);
         if (schema.primaryKey) {
             int64_t key = row[*schema.primaryKey].asInt();
             if (table.store->contains(key) || !batchKeys.insert(key).second) {
@@ -180,6 +210,7 @@ QueryResult Database::update(UpdateStmt& stmt) {
             checkType(schema.columns[targets[i]], value);
             next.row[targets[i]] = std::move(value);
         }
+        checkRowSize(next.row);
         next.key = table.keyForUpdatedRow(next.row, match.key);
         oldKeys.insert(match.key);
         if (!newKeys.insert(next.key).second) throw SqlError(duplicateKeyError(table, next.key));

@@ -24,6 +24,12 @@ add_library(jerryql_core
   src/parser.cpp
   src/planner.cpp
   src/shell.cpp
+  src/storage/btree.cpp
+  src/storage/btree_store.cpp
+  src/storage/buffer_pool.cpp
+  src/storage/file.cpp
+  src/storage/pager.cpp
+  src/storage/row_codec.cpp
   src/value.cpp
 )
 target_include_directories(jerryql_core PUBLIC src)
@@ -69,6 +75,7 @@ add_executable(jerryql_tests
   tests/test_parser.cpp
   tests/test_planner.cpp
   tests/test_engine.cpp
+  tests/test_btree.cpp
 )
 target_link_libraries(jerryql_tests PRIVATE jerryql_core)
 add_test(NAME unit_tests COMMAND jerryql_tests)

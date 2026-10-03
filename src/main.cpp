@@ -1,8 +1,9 @@
 // JerryQL command-line shell.
 //
-//   jerryql                    interactive prompt (or reads SQL piped on stdin)
-//   jerryql script.sql         run a script and exit
-//   jerryql --echo script.sql  also print each statement before its result
+//   jerryql                       in-memory database, interactive prompt (or SQL on stdin)
+//   jerryql --db app.db           open or create a database file
+//   jerryql script.sql            run a script and exit
+//   jerryql --echo script.sql     also print each statement before its result
 
 #include <unistd.h>
 
@@ -37,10 +38,13 @@ int runFile(jerryql::Database& db, const std::string& path, const jerryql::Scrip
 }
 
 // Reads lines until a statement ends with ';', then runs the buffer.
-int runInteractive(jerryql::Database& db, const jerryql::ScriptOptions& options) {
+int runInteractive(jerryql::Database& db, const jerryql::ScriptOptions& options,
+                   const std::string& dbPath) {
     const bool interactive = isatty(STDIN_FILENO);
     if (interactive) {
-        std::cout << "JerryQL - a small SQL engine in C++. Type .help for commands, .quit to exit.\n";
+        std::cout << "JerryQL - a small SQL engine in C++. Type .help for commands, .quit to exit.\n"
+                  << (dbPath.empty() ? "Using a temporary in-memory database; pass --db <file> to save.\n"
+                                     : "Database file: " + dbPath + "\n");
     }
     std::string buffer, line;
     while (true) {
@@ -63,20 +67,27 @@ int runInteractive(jerryql::Database& db, const jerryql::ScriptOptions& options)
 
 int main(int argc, char** argv) {
     jerryql::ScriptOptions options;
-    std::string scriptPath;
+    std::string scriptPath, dbPath;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--echo") {
             options.echo = true;
+        } else if (arg == "--db" && i + 1 < argc) {
+            dbPath = argv[++i];
         } else if (arg == "-h" || arg == "--help") {
-            std::cout << "usage: jerryql [--echo] [script.sql]\n";
+            std::cout << "usage: jerryql [--db file] [--echo] [script.sql]\n";
             return 0;
         } else {
             scriptPath = arg;
         }
     }
 
-    jerryql::Database db;
-    if (!scriptPath.empty()) return runFile(db, scriptPath, options);
-    return runInteractive(db, options);
+    try {
+        jerryql::Database db = dbPath.empty() ? jerryql::Database() : jerryql::Database(dbPath);
+        if (!scriptPath.empty()) return runFile(db, scriptPath, options);
+        return runInteractive(db, options, dbPath);
+    } catch (const std::exception& e) {
+        std::cerr << "jerryql: " << e.what() << "\n";
+        return 2;
+    }
 }
