@@ -302,3 +302,27 @@ says so.
   - The same breakdown showed where JerryQL really loses: full scans,
     because it decodes every column of every row, which SQLite doesn't.
     That became the next optimization target.
+
+---
+
+## Update: numbers after the full-scan speedup (current `main`)
+
+Re-ran the storage benchmark on `main` at `2a08458`, which includes the
+allocation fixes from `123ed31` (found by profiling with `perf`):
+
+| Number | What it is | Reproduce with |
+|---|---|---|
+| 3.5 µs median | primary-key lookup, 1M-row file, warm | `bench/run_storage_bench.sh storage-1m-after-scan-speedup --rows 1000000` |
+| 53 ms median | full scan of the same 1M rows (was 185 ms before the speedup: 3.5× faster) | same |
+| 23.3 µs median | 100-row range scan (was 26.1 µs) | same |
+
+The SQLite comparison (M3) was run before this speedup and its harness has a
+known flaw on SQLite's side (it converts integer results to strings), so
+the SQLite numbers are left off the resume until the harness is fixed and re-run.
+
+### Resume bullets as submitted (Oct 2026)
+
+- Built a SQL database from scratch in C++ (B+tree, buffer pool, planner);
+  3.5 µs indexed lookups vs. 53 ms full scans on 1M rows.
+- Added a write-ahead log with crash recovery; 0 corrupted databases across
+  11,000 injected crashes (1,000 real SIGKILLs + 10,000 simulated power cuts).
